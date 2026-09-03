@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+
+{% block title %}Registro | Reserva{% endblock %}
+
+{% block content %}
+<div class="flex justify-center">
+    <div class="w-full max-w-2xl">
+        <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm sm:p-8">
+            <h1 class="mb-6 text-center text-2xl font-bold text-[#0f172a]">Crear cuenta</h1>
+            <form method="post" novalidate class="space-y-4">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        {% for error in form.non_field_errors %}
+                            {{ error }}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <label for="{{ form.first_name.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Nombres</label>
+                        <input type="text" name="{{ form.first_name.html_name }}" id="{{ form.first_name.id_for_label }}" value="{{ form.first_name.value|default:'' }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                        {% for error in form.first_name.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div>
+                        <label for="{{ form.last_name.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Apellidos</label>
+                        <input type="text" name="{{ form.last_name.html_name }}" id="{{ form.last_name.id_for_label }}" value="{{ form.last_name.value|default:'' }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                        {% for error in form.last_name.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div>
+                    <label for="{{ form.email.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Correo electrónico</label>
+                    <input type="email" name="{{ form.email.html_name }}" id="{{ form.email.id_for_label }}" value="{{ form.email.value|default:'' }}"
+                           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                    {% for error in form.email.errors %}
+                        <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                    {% endfor %}
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <label for="{{ form.occupation.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Ocupación</label>
+                        <select name="{{ form.occupation.html_name }}" id="{{ form.occupation.id_for_label }}"
+                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30">
+                            {% for value, label in form.fields.occupation.choices %}
+                                <option value="{{ value }}" {% if form.occupation.value == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        {% for error in form.occupation.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div>
+                        <label for="{{ form.gender.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Género</label>
+                        <select name="{{ form.gender.html_name }}" id="{{ form.gender.id_for_label }}"
+                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30">
+                            {% for value, label in form.fields.gender.choices %}
+                                <option value="{{ value }}" {% if form.gender.value == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        {% for error in form.gender.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <label for="{{ form.phone.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Celular</label>
+                        <input type="text" name="{{ form.phone.html_name }}" id="{{ form.phone.id_for_label }}" value="{{ form.phone.value|default:'' }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30">
+                        {% for error in form.phone.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div>
+                        <label for="{{ form.date_birth.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Fecha de nacimiento</label>
+                        <input type="date" name="{{ form.date_birth.html_name }}" id="{{ form.date_birth.id_for_label }}" value="{{ form.date_birth.value|default:'' }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30">
+                        {% for error in form.date_birth.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <label for="{{ form.password1.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Contraseña</label>
+                        <input type="password" name="{{ form.password1.html_name }}" id="{{ form.password1.id_for_label }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                        {% for error in form.password1.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div>
+                        <label for="{{ form.password2.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Confirmar contraseña</label>
+                        <input type="password" name="{{ form.password2.html_name }}" id="{{ form.password2.id_for_label }}"
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                        {% for error in form.password2.errors %}
+                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <button class="w-full rounded-lg bg-[#2563eb] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]" type="submit">Registrarme</button>
+            </form>
+
+            <p class="mt-4 text-center text-sm text-[#64748b]">
+                ¿Ya tienes cuenta?
+                <a class="font-medium text-[#2563eb] hover:underline" href="{% url 'app_users:login' %}">Inicia sesión</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Reserva{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --web-primary: #2563eb;
+            --web-primary-dark: #1d4ed8;
+            --web-accent: #eaf2ff;
+            --web-ink: #0f172a;
+            --web-muted: #64748b;
+        }
+
+        body {
+            color: var(--web-ink);
+            background: #f8fafc;
+        }
+
+        .text-muted {
+            color: var(--web-muted) !important;
+        }
+
+        .hero-card {
+            background:
+                radial-gradient(circle at top left, rgba(255, 255, 255, 0.18), transparent 30%),
+                linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%);
+        }
+
+        .brand-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.75rem;
+            background: var(--web-accent);
+            color: var(--web-primary);
+            font-weight: 800;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="flex min-h-screen flex-col bg-[#f8fafc] text-[#0f172a] antialiased">
+    {% include 'include/header.html' %}
+
+    <main class="flex-1 py-8">
+        <div class="mx-auto w-full max-w-6xl px-4">
+            {% if messages %}
+                <div class="mb-4 space-y-2">
+                    {% for message in messages %}
+                        <div class="rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% elif message.tags == 'success' %}border-green-200 bg-green-50 text-green-700{% elif message.tags == 'warning' %}border-yellow-200 bg-yellow-50 text-yellow-700{% else %}border-blue-200 bg-blue-50 text-blue-700{% endif %}" role="alert">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    {% include 'include/footer.html' %}
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

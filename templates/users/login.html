@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+
+{% block title %}Login | Reserva{% endblock %}
+
+{% block content %}
+<div class="flex justify-center">
+    <div class="w-full max-w-md">
+        <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm sm:p-8">
+            <h1 class="mb-6 text-center text-2xl font-bold text-[#0f172a]">Ingresar</h1>
+            <form method="post" novalidate class="space-y-4">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                    <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        {% for error in form.non_field_errors %}
+                            {{ error }}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                <div>
+                    <label for="{{ form.email.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Correo electrónico</label>
+                    <input type="email" name="{{ form.email.html_name }}" id="{{ form.email.id_for_label }}" value="{{ form.email.value|default:'' }}"
+                           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                    {% for error in form.email.errors %}
+                        <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    <label for="{{ form.password.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Contraseña</label>
+                    <input type="password" name="{{ form.password.html_name }}" id="{{ form.password.id_for_label }}"
+                           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30" required>
+                    {% for error in form.password.errors %}
+                        <div class="mt-1 text-sm text-red-600">{{ error }}</div>
+                    {% endfor %}
+                </div>
+
+                <button class="w-full rounded-lg bg-[#2563eb] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]" type="submit">Entrar</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,82 @@
+[
+  {
+    "model": "users.user",
+    "pk": null,
+    "fields": {
+      "password": "pbkdf2_sha256$260000$gPHMcnrr3awzapSyCqfqiL$uMNwJrA3PJlCdUNOpUbXGQzkaoXROC9QEin9IvBY6Yc=",
+      "last_login": null,
+      "is_superuser": false,
+      "first_name": "Papa",
+      "last_name": "Bardales",
+      "is_staff": false,
+      "is_active": true,
+      "email": "papa@gmail.com",
+      "occupation": "0",
+      "gender": "M",
+      "date_birth": "1980-01-01",
+      "phone": "999999999",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": null,
+    "fields": {
+      "password": "pbkdf2_sha256$260000$gPHMcnrr3awzapSyCqfqiL$uMNwJrA3PJlCdUNOpUbXGQzkaoXROC9QEin9IvBY6Yc=",
+      "last_login": null,
+      "is_superuser": false,
+      "first_name": "Mama",
+      "last_name": "Bardales",
+      "is_staff": false,
+      "is_active": true,
+      "email": "mama@gmail.com",
+      "occupation": "1",
+      "gender": "F",
+      "date_birth": "1982-01-01",
+      "phone": "999999998",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": null,
+    "fields": {
+      "password": "pbkdf2_sha256$260000$gPHMcnrr3awzapSyCqfqiL$uMNwJrA3PJlCdUNOpUbXGQzkaoXROC9QEin9IvBY6Yc=",
+      "last_login": null,
+      "is_superuser": false,
+      "first_name": "Hermano",
+      "last_name": "Bardales",
+      "is_staff": false,
+      "is_active": true,
+      "email": "hermano@gmail.com",
+      "occupation": "2",
+      "gender": "M",
+      "date_birth": "1985-01-01",
+      "phone": "999999997",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": null,
+    "fields": {
+      "password": "pbkdf2_sha256$260000$gPHMcnrr3awzapSyCqfqiL$uMNwJrA3PJlCdUNOpUbXGQzkaoXROC9QEin9IvBY6Yc=",
+      "last_login": null,
+      "is_superuser": false,
+      "first_name": "Hermana",
+      "last_name": "Bardales",
+      "is_staff": false,
+      "is_active": true,
+      "email": "hermana@gmail.com",
+      "occupation": "3",
+      "gender": "F",
+      "date_birth": "1988-01-01",
+      "phone": "999999996",
+      "groups": [],
+      "user_permissions": []
+    }
+  }
+]

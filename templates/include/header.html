@@ -1,0 +1,40 @@
+<header class="border-b border-gray-200 bg-white shadow-sm">
+    <nav class="mx-auto w-full max-w-6xl px-4">
+        <div class="flex h-16 items-center justify-between">
+            <a class="flex items-center gap-2 font-bold text-[#0f172a]" href="/">
+                <span class="brand-mark">RB</span>
+                <span>Sistema Web con Usuarios</span>
+            </a>
+
+            <ul class="flex items-center gap-3">
+                <li>
+                    <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="/">Inicio</a>
+                </li>
+
+                {% if request.user.is_authenticated %}
+                {% if request.user.occupation == '0' or request.user.is_superuser %}
+                <li>
+                    <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="{% url 'app_users:lista' %}">Usuarios</a>
+                </li>
+                {% endif %}
+                <li>
+                    <a class="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="{% url 'app_users:user-update' %}">Cambiar contraseña</a>
+                </li>
+                <li>
+                    <a class="inline-block rounded-md border border-[#2563eb] px-3 py-2 text-sm font-medium text-[#2563eb] hover:bg-[#2563eb] hover:text-white" href="{% url 'app_users:dashboard' %}">Perfil</a>
+                </li>
+                <li>
+                    <a class="inline-block rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700" href="{% url 'app_users:logout' %}">Salir</a>
+                </li>
+                {% else %}
+                <li>
+                    <a class="inline-block rounded-md border border-[#2563eb] px-3 py-2 text-sm font-medium text-[#2563eb] hover:bg-[#2563eb] hover:text-white" href="{% url 'app_users:login' %}">Ingresar</a>
+                </li>
+                <li>
+                    <a class="inline-block rounded-md bg-[#2563eb] px-3 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8]" href="{% url 'app_users:register' %}">Registrarse</a>
+                </li>
+                {% endif %}
+            </ul>
+        </div>
+    </nav>
+</header>
