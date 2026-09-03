@@ -1,10 +1,10 @@
-param(
+﻿param(
     [string]$ProjectName
 )
 
 $ErrorActionPreference = 'Stop'
 
-function Write-Utf8NoBomText {
+function Write-Utf8Text {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Path,
@@ -1626,7 +1626,7 @@ $files['fixtures\users.json'] = @"
 # ESCRITURA DE ARCHIVOS
 # ------------------------------------------------------------------
 foreach ($path in $files.Keys) {
-    Write-Utf8NoBomText -Path (Join-Path $destinationPath $path) -Content $files[$path]
+    Write-Utf8Text -Path (Join-Path $destinationPath $path) -Content $files[$path]
 }
 
 $pythonCmd = Get-PythonCommand
