@@ -9,7 +9,8 @@ def create_user(form_data):
         form_data['password1'],
         first_name=form_data['first_name'],
         last_name=form_data['last_name'],
-        occupation=form_data['occupation'],
+        # Los registros públicos nunca pueden crear cuentas administrativas.
+        occupation=User.USUARIO,
         gender=form_data['gender'],
         date_birth=form_data['date_birth'],
         phone=form_data.get('phone', ''),

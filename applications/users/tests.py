@@ -1,10 +1,14 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 User = get_user_model()
 
 
+TEST_SETTINGS = override_settings(SECURE_SSL_REDIRECT=False)
+
+
+@TEST_SETTINGS
 class UserRegisterViewTests(TestCase):
 
     def test_register_creates_user(self):
@@ -54,7 +58,22 @@ class UserRegisterViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Las contraseñas no coinciden.')
 
+    def test_register_cannot_create_admin(self):
+        data = {
+            'email': 'admin-attempt@test.com',
+            'first_name': 'Atacante',
+            'last_name': 'Test',
+            'occupation': User.ADMINISTRADOR,
+            'gender': 'M',
+            'password1': 'Passw0rd!123',
+            'password2': 'Passw0rd!123',
+        }
+        response = self.client.post(reverse('app_users:register'), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(email=data['email']).exists())
 
+
+@TEST_SETTINGS
 class LoginUserTests(TestCase):
 
     def setUp(self):
@@ -85,6 +104,7 @@ class LoginUserTests(TestCase):
         self.assertContains(response, 'Email o contraseña incorrectos.')
 
 
+@TEST_SETTINGS
 class UpdatePasswordViewTests(TestCase):
 
     def setUp(self):
@@ -121,6 +141,7 @@ class UpdatePasswordViewTests(TestCase):
         self.assertContains(response, 'Las contraseñas no coinciden.')
 
 
+@TEST_SETTINGS
 class ListaUsuariosViewTests(TestCase):
 
     def setUp(self):
@@ -154,10 +175,17 @@ class ListaUsuariosViewTests(TestCase):
         self.assertRedirects(response, reverse('app_users:login') + '?next=/users/lista/')
 
 
+@TEST_SETTINGS
 class LogoutViewTests(TestCase):
 
-    def test_logout_redirects_to_login(self):
+    def test_logout_requires_post(self):
         user = User.objects.create_user('out@test.com', 'Passw0rd!123', first_name='X', last_name='Y')
         self.client.login(email='out@test.com', password='Passw0rd!123')
         response = self.client.get(reverse('app_users:logout'))
+        self.assertEqual(response.status_code, 405)
+
+    def test_logout_post_redirects_to_login(self):
+        user = User.objects.create_user('out@test.com', 'Passw0rd!123', first_name='X', last_name='Y')
+        self.client.login(email='out@test.com', password='Passw0rd!123')
+        response = self.client.post(reverse('app_users:logout'))
         self.assertRedirects(response, reverse('app_users:login'))

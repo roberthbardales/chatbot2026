@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'applications.users',
     'applications.home',
+    'applications.chat',
 ]
 
 # --------------------------------------------------
@@ -160,6 +161,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'users.User'
 
+GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
+GROQ_API_KEY = env('GROQ_API_KEY', default='')
+
 LOGIN_URL = 'app_users:login'
 LOGIN_REDIRECT_URL = 'app_users:dashboard'
 LOGOUT_REDIRECT_URL = 'app_users:login'
@@ -168,11 +172,28 @@ LOGOUT_REDIRECT_URL = 'app_users:login'
 # SEGURIDAD EN PRODUCCIÓN
 # --------------------------------------------------
 if not DEBUG:
+    # Encabezado para proxies inversos (Nginx / Cloudflare / Heroku)
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # Redirección forzada a HTTPS
     SECURE_SSL_REDIRECT = True
-    SECURE_HSTS_SECONDS = 31536000
+
+    # Configuración HSTS (Solo activa en producción con HTTPS real)
+    SECURE_HSTS_SECONDS = 31536000  # 1 año
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+    # Protección de headers y cookies
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = 'DENY'
+    SECURE_REFERRER_POLICY = 'same-origin'
+else:
+    # Configuración explícita para Desarrollo Local (DEBUG = True)
+    SECURE_SSL_REDIRECT = False
+    SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False

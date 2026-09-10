@@ -46,7 +46,7 @@ class LoginUser(FormView):
 
 
 class LogoutView(LoginRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):
         services.logout_user(request)
         return HttpResponseRedirect(reverse('app_users:login'))
 

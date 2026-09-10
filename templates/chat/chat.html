@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+
+{% block title %}Chat del blog{% endblock %}
+
+{% block content %}
+<section class="mx-auto -my-4 max-w-4xl">
+    <div class="mb-3">
+        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Pregunta sobre los artículos</h1>
+        <p class="mt-1 text-slate-600">Consulta contenido real del blog y continúa la conversación con contexto.</p>
+    </div>
+
+    <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-wrap gap-3 border-b border-slate-200 bg-white p-3">
+            <div>
+            <label class="block text-sm font-semibold text-slate-700" for="source">Fuente</label>
+            <select id="source" name="source" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-auto">
+                {% for value, label in source_choices %}
+                <option value="{{ value }}" {% if default_source == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            </div>
+            <div>
+            <label class="block text-sm font-semibold text-slate-700" for="provider">Modelo IA</label>
+            <select id="provider" name="provider" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-auto" {% if conversation %}disabled{% endif %}>
+                {% for value, label in provider_choices %}
+                <option value="{{ value }}" {% if default_provider == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            </div>
+        </div>
+        <div id="messages" class="min-h-[16rem] space-y-2 bg-slate-50 p-2 sm:p-3" aria-live="polite">
+            {% if chat_messages %}
+                {% for message in chat_messages %}
+                <div class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}">
+                    <div class="max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 {% if message.role == 'user' %}rounded-br-sm bg-blue-600 text-white{% else %}rounded-bl-sm border border-slate-200 bg-white text-slate-700{% endif %}">
+                        {{ message.content|linebreaksbr }}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div id="empty-state" class="flex min-h-[5rem] items-center justify-center text-center">
+                    <div>
+                        <h2 class="mt-2 font-semibold text-slate-900">¿Qué quieres saber?</h2>
+                        <p class="mt-1 text-sm text-slate-500">Prueba con: “¿Tienes artículos sobre GitHub?”</p>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+        <form id="chat-form" class="border-t border-slate-200 bg-white p-3" method="post">
+            {% csrf_token %}
+            <div class="flex gap-2">
+                <label class="sr-only" for="message">Mensaje</label>
+                <input id="message" name="message" autocomplete="off" required class="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Escribe tu pregunta...">
+                <button id="send-button" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" type="submit">Enviar</button>
+            </div>
+            <p id="status" class="mt-1 hidden text-xs text-slate-500">Consultando artículos y preparando una respuesta...</p>
+        </form>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const form = document.getElementById('chat-form');
+    const input = document.getElementById('message');
+    const messages = document.getElementById('messages');
+    const button = document.getElementById('send-button');
+    const status = document.getElementById('status');
+    const provider = document.getElementById('provider');
+    const source = document.getElementById('source');
+    let conversation = '{{ conversation.id|default:"" }}';
+
+    function addMessage(text, user) {
+        const row = document.createElement('div');
+        row.className = `flex ${user ? 'justify-end' : 'justify-start'}`;
+        const bubble = document.createElement('div');
+        bubble.className = `max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 ${user ? 'rounded-br-sm bg-blue-600 text-white' : 'rounded-bl-sm border border-slate-200 bg-white text-slate-700'}`;
+        bubble.textContent = text;
+        row.appendChild(bubble);
+        messages.appendChild(row);
+        messages.scrollTop = messages.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const text = input.value.trim();
+        if (!text) return;
+        const data = new FormData(form);
+        data.set('message', text);
+        if (conversation) data.set('conversation', conversation);
+        data.set('provider', provider.value);
+        data.set('source', source.value);
+        addMessage(text, true);
+        input.value = '';
+        button.disabled = true;
+        status.classList.remove('hidden');
+        try {
+            const response = await fetch('{% url "chat:send" %}', {method: 'POST', body: data, headers: {'X-Requested-With': 'XMLHttpRequest'}});
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                if (response.redirected || response.status === 401 || response.status === 403) {
+                    throw new Error('Tu sesión expiró o no tienes permisos. Recarga la página e inténtalo nuevamente.');
+                }
+                throw new Error('El servidor devolvió una respuesta no válida. Inténtalo nuevamente más tarde.');
+            }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'No se pudo enviar el mensaje.');
+            conversation = result.conversation;
+            addMessage(result.response, false);
+        } catch (error) {
+            addMessage(error.message, false);
+        } finally {
+            button.disabled = false;
+            status.classList.add('hidden');
+            input.focus();
+        }
+    });
+})();
+</script>
+{% endblock %}
