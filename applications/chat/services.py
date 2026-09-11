@@ -2,18 +2,22 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+from django.conf import settings
 from django.utils import timezone
 
 from .analytics import (category_counts, entries_by_year, latest_entry,
                         most_active_author, most_liked_entries, oldest_entry)
 from .blog_api import BlogAPIError, clean_content, entry_date, get_all_entries, search_entries
 from .providers import ProviderError, generate_response
+from .embeddings import EmbeddingError
+from .vector_search import search_similar_products
 from .dummyjson_api import (DummyJSONError, category_products, product_by_id,
                             product_by_sku, search_products)
 from .models import DUMMYJSON
 
 
 NO_INFORMATION = 'No encontré esa información en los artículos disponibles del blog.'
+BLOG_DISABLED = 'La fuente Blog está temporalmente deshabilitada.'
 BLOG_UNAVAILABLE = 'No puedo consultar los artículos del blog en este momento. Inténtalo nuevamente más tarde.'
 PROVIDER_UNAVAILABLE = 'El servicio de respuestas no está disponible en este momento. Inténtalo nuevamente más tarde.'
 PRODUCTS_UNAVAILABLE = 'No puedo consultar los productos en este momento. Inténtalo nuevamente más tarde.'
@@ -72,6 +76,19 @@ def _find_product(query):
     if ambiguous:
         return None, True
     return (matches[0] if matches else None), False
+
+
+def _document_product(document):
+    return {
+        'id': document.dummyjson_id,
+        'title': document.title,
+        'description': document.description,
+        'category': document.category,
+        'brand': document.brand,
+        'sku': document.sku,
+        'price': float(document.price) if document.price is not None else None,
+        'stock': document.stock,
+    }
 
 
 def _comparison_names(text):
@@ -162,6 +179,8 @@ def _entry_response(entry, prefix):
 def answer_message(conversation, text):
     if conversation.source == DUMMYJSON:
         return answer_product_message(conversation, text)
+    if not settings.BLOG_SOURCE_ENABLED:
+        return BLOG_DISABLED
     return answer_blog_message(conversation, text)
 
 
@@ -217,13 +236,23 @@ def answer_product_message(conversation, text):
             query = re.sub(r'\s+', ' ', query)
             search_query = query or text
             products = search_products(search_query, 6)
+            semantic_search = False
+            if not products:
+                try:
+                    products = [_document_product(document) for document, _ in search_similar_products(text, 6)]
+                    semantic_search = bool(products)
+                except EmbeddingError:
+                    products = []
             if not products:
                 fallback_terms = [term for term in _normalize_product_text(search_query).split() if len(term) > 2]
                 fallback = []
                 for term in fallback_terms:
                     fallback.extend(search_products(term, 6))
                 products = list({product.get('id'): product for product in fallback if product.get('id')}.values())
-            products, ambiguous = _validated_product_matches(search_query, products)
+            if not semantic_search:
+                products, ambiguous = _validated_product_matches(search_query, products)
+            else:
+                ambiguous = False
             if ambiguous:
                 return PRODUCT_AMBIGUOUS
     except DummyJSONError:

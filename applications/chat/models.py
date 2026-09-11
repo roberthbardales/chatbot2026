@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from pgvector.django import VectorField
 
 from .providers import GROQ, PROVIDER_CHOICES
 
@@ -35,3 +36,22 @@ class Message(models.Model):
 
     class Meta:
         ordering = ('created_at', 'pk')
+
+
+class ProductDocument(models.Model):
+    dummyjson_id = models.PositiveIntegerField(unique=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=120, blank=True)
+    brand = models.CharField(max_length=120, blank=True)
+    sku = models.CharField(max_length=120, blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    stock = models.IntegerField(null=True, blank=True)
+    content = models.TextField()
+    content_hash = models.CharField(max_length=64)
+    embedding = VectorField(dimensions=768)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('dummyjson_id',)

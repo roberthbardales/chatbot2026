@@ -35,6 +35,11 @@ def search_products(query, limit=6):
     return _products(data)[:limit]
 
 
+def list_products():
+    data = _request_json(f'{DUMMYJSON_URL}?limit=0')
+    return _products(data)
+
+
 def category_products(category, limit=6):
     data = _request_json(f'{DUMMYJSON_URL}/category/{quote(category)}?limit={limit}')
     return _products(data)[:limit]

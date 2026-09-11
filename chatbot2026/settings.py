@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'applications.users',
     'applications.home',
     'applications.chat',
+    'applications.whatsapp',
 ]
 
 # --------------------------------------------------
@@ -163,6 +164,18 @@ AUTH_USER_MODEL = 'users.User'
 
 GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
+BLOG_SOURCE_ENABLED = env.bool('BLOG_SOURCE_ENABLED', default=False)
+EMBEDDING_MODEL = env('EMBEDDING_MODEL', default='models/gemini-embedding-001')
+EMBEDDING_DIMENSIONS = env.int('EMBEDDING_DIMENSIONS', default=768)
+VECTOR_SEARCH_THRESHOLD = env.float('VECTOR_SEARCH_THRESHOLD', default=0.62)
+WHATSAPP_VERIFY_TOKEN = env('WHATSAPP_VERIFY_TOKEN', default='')
+WHATSAPP_ACCESS_TOKEN = env('WHATSAPP_ACCESS_TOKEN', default='')
+WHATSAPP_APP_SECRET = env('WHATSAPP_APP_SECRET', default='')
+WHATSAPP_PHONE_NUMBER_ID = env('WHATSAPP_PHONE_NUMBER_ID', default='')
+WHATSAPP_API_VERSION = env('WHATSAPP_API_VERSION', default='v22.0')
+WHATSAPP_DEFAULT_PROVIDER = env('WHATSAPP_DEFAULT_PROVIDER', default='groq')
+WHATSAPP_DEFAULT_SOURCE = env('WHATSAPP_DEFAULT_SOURCE', default='dummyjson')
+WHATSAPP_MAX_MESSAGE_LENGTH = env.int('WHATSAPP_MAX_MESSAGE_LENGTH', default=2000)
 
 LOGIN_URL = 'app_users:login'
 LOGIN_REDIRECT_URL = 'app_users:dashboard'

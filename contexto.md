@@ -1,6 +1,6 @@
 # Contexto del proyecto: chatbot2026
 
-Última actualización: 2026-09-09
+Última actualización: 2026-09-10
 
 ## Resumen
 
@@ -11,9 +11,11 @@ Aplicación web Django para gestión de usuarios, autenticación y un MVP de cha
 - Python 3.10+
 - Django 3.2.25, actualmente fuera de soporte
 - PostgreSQL mediante `psycopg2-binary`
+- `pgvector` para búsqueda vectorial en PostgreSQL
 - Configuración por variables de entorno con `django-environ`
 - Plantillas HTML con Tailwind Play CDN
 - Gemini API mediante `google-generativeai`, usando `gemini-2.5-flash-lite`
+- Embeddings mediante Gemini `models/gemini-embedding-001`
 - Groq API mediante `groq`, usando `openai/gpt-oss-20b`
 - Zona horaria: `America/Lima`
 - Idioma: `es-pe`
@@ -30,6 +32,7 @@ chatbot2026/
 │   ├── home/            # página inicial pública
 │   ├── users/           # usuario custom y autenticación
 │   └── chat/            # chatbot, API del blog y conversaciones
+│   └── whatsapp/        # webhook, contactos y mensajes de WhatsApp
 ├── templates/           # plantillas globales
 ├── static/              # archivos estáticos fuente
 ├── staticfiles/         # salida de collectstatic, ignorada
@@ -47,6 +50,12 @@ chatbot2026/
 - `LOGOUT_REDIRECT_URL`: `app_users:login`
 - `GEMINI_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
 - `GROQ_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
+- `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_APP_SECRET` se cargan desde `.env`.
+- `ALLOWED_HOSTS` incluye `localhost`, `127.0.0.1` y los dominios `ngrok-free.app` y `ngrok-free.dev` para pruebas locales.
+- `BLOG_SOURCE_ENABLED` controla la disponibilidad de la fuente Blog y actualmente está desactivada por defecto.
+- `EMBEDDING_MODEL` configura el modelo de embeddings; el valor predeterminado es `models/gemini-embedding-001`.
+- `EMBEDDING_DIMENSIONS` configura la dimensión de los vectores y actualmente es `768`.
+- `VECTOR_SEARCH_THRESHOLD` configura la similitud mínima y actualmente es `0.62`.
 - El modelo Gemini configurado es `gemini-2.5-flash-lite`.
 - El modelo Groq configurado es `openai/gpt-oss-20b`.
 - En producción se activa redirección HTTPS, HSTS, cookies seguras, `X_FRAME_OPTIONS = 'DENY'` y protección de contenido.
@@ -79,6 +88,7 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 - `/users/lista/` - listado de usuarios, solo administradores
 - `/chat/` - interfaz del chatbot, requiere autenticación
 - `/chat/send/` - endpoint POST para enviar mensajes del chatbot
+- `/whatsapp/webhook/` - verificación y recepción del webhook de Meta WhatsApp
 
 ## Reglas de negocio actuales
 
@@ -108,20 +118,46 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 - La lista de artículos se cachea localmente durante 5 minutos.
 - La fuente `dummyjson` consulta `https://dummyjson.com/products` mediante `applications/chat/dummyjson_api.py`.
 - DummyJSON permite buscar productos, filtrar por categoría, consultar por ID y buscar SKU recorriendo páginas.
+- El RAG vectorial de DummyJSON utiliza el modelo `ProductDocument` y embeddings almacenados en PostgreSQL mediante `pgvector`.
+- Cada producto se indexa inicialmente como un único documento vectorial.
+- El comando `venv\Scripts\python.exe manage.py index_dummyjson` descarga los productos, calcula hashes y genera embeddings solo para productos nuevos o modificados.
+- La búsqueda semántica usa similitud coseno como respaldo cuando la búsqueda textual no encuentra resultados.
+- La extensión de servidor `vector` está instalada y activa en PostgreSQL; la migración `0006_productdocument` ya fue aplicada.
+- Actualmente hay 194 productos de DummyJSON indexados en la base de datos local.
 - Precio y stock se leen del producto; las comparaciones por ID se responden de forma determinista.
 - Los datos de productos y artículos no se mezclan: cada pregunta usa exclusivamente la fuente activa.
 - Para productos, la coincidencia exacta usa el nombre normalizado y tiene prioridad absoluta. Las coincidencias parciales requieren puntuación mínima de `0.60`; si dos resultados quedan a menos de `0.10`, se consideran ambiguos y se pide aclaración. Estos valores reflejan el buscador actual: una coincidencia exacta obtiene `1.0`, mientras que nombres incompletos o con errores leves quedan normalmente entre `0.60` y `0.90`; por debajo de `0.60` se rechazan.
 - Se normalizan mayúsculas, minúsculas, acentos y apóstrofes; por ejemplo, `Dior J adore` coincide con `Dior J'adore`.
 - Las comparaciones aceptan IDs, nombres, conectores `con`, `entre`, listas separadas por comas y consultas con instrucciones adicionales.
 - Las respuestas de productos son deterministas: el modelo IA no genera ni modifica precios, stock, SKU o resultados de comparación.
-- No se usan embeddings, RAG vectorial, pgvector, Redis, Celery, WhatsApp ni WebSockets.
+- El Blog mantiene su RAG textual y está deshabilitado temporalmente mediante `BLOG_SOURCE_ENABLED=False`; su código, modelos, migraciones y pruebas no fueron eliminados.
+- DummyJSON usa RAG vectorial para búsquedas semánticas, mientras que ID, SKU, precio, stock y comparaciones continúan siendo deterministas.
+- Los mensajes cotidianos todavía no tienen una capa dedicada de intención: saludos como `hola amigo` pueden terminar tratándose como búsquedas de productos.
+- El plan para hacer la conversación más natural está documentado en `natural.md`; contempla saludos, despedidas, agradecimientos, búsquedas amplias y aclaraciones usando el historial.
+- No se usan Redis, Celery ni WebSockets.
 - Las respuestas de Gemini y Groq son síncronas y están sujetas a las cuotas de sus respectivos proyectos.
+
+## WhatsApp
+
+- La aplicación `applications/whatsapp` recibe mensajes mediante `/whatsapp/webhook/`.
+- La migración inicial de WhatsApp ya fue aplicada.
+- Se almacenan contactos en `WhatsAppContact` y mensajes recibidos en `WhatsAppMessage`.
+- El webhook valida el `hub.verify_token` durante la configuración de Meta y la firma `X-Hub-Signature-256` en las notificaciones.
+- El envío de respuestas utiliza la API de WhatsApp Cloud mediante `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`.
+- Django se ejecuta localmente en `127.0.0.1:8000`.
+- Ngrok está activo y apunta a `http://localhost:8000` mediante la URL pública actual `https://wrongly-sugar-dimmed.ngrok-free.dev`.
+- La Callback URL registrada en Meta es `https://wrongly-sugar-dimmed.ngrok-free.dev/whatsapp/webhook/`.
+- El webhook ya fue verificado y el campo `messages` aparece suscrito en Meta.
+- Las pruebas automáticas de Meta para `messages` llegan al webhook y responden `HTTP 200`.
+- El webhook ignora correctamente los payloads ficticios de Meta cuyo `phone_number_id` no coincide con `WHATSAPP_PHONE_NUMBER_ID`.
+- Todavía no se ha recibido ningún mensaje real desde el número personal autorizado; la base de datos conserva un único mensaje ficticio con estado `failed`.
+- Falta confirmar que el número personal esté agregado y autorizado en **WhatsApp > API Setup**, enviar un mensaje real al número de prueba y verificar un registro `processed` con respuesta.
 
 ## Pruebas
 
 Las pruebas principales están en `applications/users/tests.py` e incluyen registro, duplicados, contraseñas, login, cambio de contraseña, permisos del listado y logout.
 
-Las pruebas del chatbot están en `applications/chat/tests.py` e incluyen limpieza de HTML, búsqueda de artículos, autenticación, creación de conversaciones, guardado de mensajes, selección de proveedor, rechazo de mensajes vacíos, errores transaccionales, UUID inválido, coincidencias exactas y parciales, errores ortográficos leves, ambigüedad, SKU, campos faltantes, errores de API y comparaciones por nombres e IDs. Actualmente contiene 24 pruebas.
+Las pruebas del chatbot están en `applications/chat/tests.py` e incluyen limpieza de HTML, búsqueda de artículos, autenticación, creación de conversaciones, guardado de mensajes, selección de proveedor, rechazo de mensajes vacíos, errores transaccionales, UUID inválido, coincidencias exactas y parciales, errores ortográficos leves, ambigüedad, SKU, campos faltantes, errores de API y comparaciones por nombres e IDs. Actualmente contiene 25 pruebas.
 
 Se ejecutaron 20 consultas complejas reales contra DummyJSON y el servicio del chatbot: 20/20 fueron correctas o rechazaron correctamente el producto inexistente. Los precios, stocks y SKU coincidieron con la API.
 
@@ -133,10 +169,11 @@ Ejecutar con el entorno virtual del proyecto:
 venv\Scripts\python.exe manage.py check
 venv\Scripts\python.exe manage.py test
 venv\Scripts\python.exe manage.py migrate
+venv\Scripts\python.exe manage.py index_dummyjson
 venv\Scripts\python.exe manage.py runserver
 ```
 
-Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal de tests.
+Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal de tests. La migración vectorial requiere además permisos suficientes para crear la extensión `vector` en la base temporal.
 
 ## Convenciones de trabajo
 
@@ -160,6 +197,9 @@ Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal
 - Evaluar una caché compartida si el chatbot se despliega con varios procesos o servidores.
 - Revisar la cuota y facturación de Gemini; el nivel gratuito puede limitar las pruebas diarias y por minuto.
 - Revisar la cuota y disponibilidad del modelo en Groq; se necesita una cuenta y una API key de Groq.
+- Optimizar el indexador para usar embeddings por lotes si el catálogo de DummyJSON crece; actualmente genera embeddings individualmente.
+- Configurar una base de tests con `pgvector` habilitado o permisos adecuados para ejecutar todas las pruebas.
+- Implementar la capa de conversación natural descrita en `natural.md`, antes de ejecutar búsquedas textuales o vectoriales.
 - Sustituir Tailwind Play CDN por un proceso de build para producción.
 - Actualizar este archivo cuando cambien modelos, URLs, dependencias, permisos o comandos.
 
@@ -167,3 +207,4 @@ Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal
 
 - `base.md`: documentación extensa del proyecto y su historial.
 - `revisar_futuro.md`: revisión técnica y hallazgos pendientes.
+- `natural.md`: plan para detectar conversación cotidiana, búsquedas amplias y aclaraciones.

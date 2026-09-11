@@ -6,6 +6,7 @@ from django.db import transaction
 from django.views import View
 from django.views.generic import TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.conf import settings
 
 from .models import BLOG, DUMMYJSON, SOURCE_CHOICES, Conversation, Message
 from .providers import GROQ, PROVIDER_CHOICES
@@ -28,8 +29,14 @@ class ChatView(LoginRequiredMixin, TemplateView):
             'chat_messages': conversation.messages.all() if conversation else [],
             'provider_choices': PROVIDER_CHOICES,
             'default_provider': conversation.provider if conversation else GROQ,
-            'source_choices': SOURCE_CHOICES,
-            'default_source': conversation.source if conversation else DUMMYJSON,
+            'source_choices': (
+                SOURCE_CHOICES if settings.BLOG_SOURCE_ENABLED
+                else ((DUMMYJSON, 'Productos'),)
+            ),
+            'default_source': (
+                conversation.source if conversation and conversation.source == DUMMYJSON
+                else DUMMYJSON
+            ),
         })
         return context
 
@@ -53,6 +60,8 @@ class SendMessageView(LoginRequiredMixin, View):
             source = request.POST.get('source', DUMMYJSON)
             valid_providers = {value for value, _ in PROVIDER_CHOICES}
             valid_sources = {value for value, _ in SOURCE_CHOICES}
+            if not settings.BLOG_SOURCE_ENABLED:
+                valid_sources.discard(BLOG)
             if provider not in valid_providers:
                 return JsonResponse({'error': 'El modelo seleccionado no es válido.'}, status=400)
             if source not in valid_sources:
@@ -60,7 +69,10 @@ class SendMessageView(LoginRequiredMixin, View):
             conversation = Conversation.objects.create(user=request.user, provider=provider, source=source)
         if conversation_id:
             source = request.POST.get('source', conversation.source)
-            if source not in {value for value, _ in SOURCE_CHOICES}:
+            valid_sources = {value for value, _ in SOURCE_CHOICES}
+            if not settings.BLOG_SOURCE_ENABLED:
+                valid_sources.discard(BLOG)
+            if source not in valid_sources:
                 return JsonResponse({'error': 'La fuente seleccionada no es válida.'}, status=400)
             if source != conversation.source:
                 conversation.source = source

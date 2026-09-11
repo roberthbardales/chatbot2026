@@ -5,4 +5,5 @@ app_name = 'app_home'
 
 urlpatterns = [
     path('', views.IndexView.as_view(), name='index'),
+    path('privacidad/', views.PrivacyView.as_view(), name='privacy'),
 ]

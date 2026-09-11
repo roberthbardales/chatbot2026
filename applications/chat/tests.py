@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.test import TestCase
+from django.test import override_settings
 from django.urls import reverse
 
 from applications.users.models import User
@@ -52,6 +53,7 @@ class ChatFlowTests(TestCase):
         self.assertRedirects(response, reverse('app_users:login') + '?next=/chat/')
 
     @patch('applications.chat.services.generate_response', return_value='Respuesta basada en el artículo.')
+    @override_settings(BLOG_SOURCE_ENABLED=True)
     @patch('applications.chat.services.search_entries')
     def test_send_creates_conversation_and_messages(self, search, generate):
         search.return_value = [{'id': 1, 'title': 'GitHub', 'resume': 'Guía', 'content': '<p>Contenido</p>', 'slug': 'github', 'category': {}, 'user': {}}]
@@ -66,6 +68,7 @@ class ChatFlowTests(TestCase):
         self.assertEqual(response.json()['response'], 'Respuesta basada en el artículo.')
 
     @patch('applications.chat.services.generate_response', return_value='Respuesta de Groq.')
+    @override_settings(BLOG_SOURCE_ENABLED=True)
     @patch('applications.chat.services.search_entries', return_value=[])
     def test_selected_provider_is_persisted(self, search, generate):
         self.client.force_login(self.user)
