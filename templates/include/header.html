@@ -11,13 +11,9 @@
                     <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="/">Inicio</a>
                 </li>
                 <li>
-                    <a class="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="{% url 'app_home:privacy' %}">Privacidad</a>
-                </li>
-
-                {% if request.user.is_authenticated %}
-                <li>
                     <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="{% url 'chat:index' %}">Chat</a>
                 </li>
+                {% if request.user.is_authenticated %}
                 {% if request.user.occupation == '0' or request.user.is_superuser %}
                 <li>
                     <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="{% url 'app_users:lista' %}">Usuarios</a>

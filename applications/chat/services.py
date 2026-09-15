@@ -199,6 +199,8 @@ def answer_product_message(conversation, text):
             product_ids = list(dict.fromkeys(product_ids))[:10]
             if len(product_ids) >= 2 and (re.search(r'\bids?\b', text, re.I) or re.search(r'\bcompar', text, re.I)):
                 products = [product_by_id(product_id) for product_id in product_ids]
+                if any(product is None for product in products):
+                    return PRODUCT_NOT_FOUND
                 return _compare_products(products)
             comparison_names = _comparison_names(text)
             if len(comparison_names) >= 2:
@@ -217,12 +219,11 @@ def answer_product_message(conversation, text):
                 return _compare_products(products)
             if comparison_names:
                 first, first_ambiguous = _find_product(comparison_names[0])
-                second, second_ambiguous = None, False
-                if first_ambiguous or second_ambiguous:
+                if first_ambiguous:
                     return PRODUCT_AMBIGUOUS
-                if not first or not second:
+                if not first:
                     return PRODUCT_NOT_FOUND
-                return _compare_products([first, second])
+                return _product_details(first)
         category_match = re.search(
             r'(?:categor[ií]a|category)\s*[:\-]?\s*([\w -]+?)(?=\s+(?:y|dime|indica|mu[eé]strame|con|sus)\b|[?.!,]|$)',
             text,

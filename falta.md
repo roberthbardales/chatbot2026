@@ -1,4 +1,4 @@
-# Pendientes Para Probar WhatsApp Localmente
+# Pendientes Del Proyecto
 
 ## Estado Correcto
 
@@ -11,12 +11,24 @@
 - Migración de WhatsApp: aplicada.
 - Webhook Django: implementado en `/whatsapp/webhook/`.
 - RAG de DummyJSON: disponible.
-- Ngrok: ejecutándose y apuntando a `http://localhost:8000`.
-- URL pública actual: `https://wrongly-sugar-dimmed.ngrok-free.dev`.
+- Ngrok: solo necesario durante las pruebas locales y debe apuntar a `http://localhost:8000`.
+- URL pública: temporal; cambia al reiniciar el túnel salvo que se use un dominio reservado.
 - Verificación del webhook en Meta: correcta.
 - Prueba automática del campo `messages`: correcta y responde `HTTP 200`.
-- Mensajes reales recibidos desde el número personal: todavía ninguno.
+- Mensajes reales recibidos desde el número personal: confirmado; el chatbot genera y envía respuestas correctamente.
+- API de Meta: envío validado con `v26.0` y respuesta `HTTP 200`.
 - VPS: no es necesario para esta fase.
+
+## Pendientes Técnicos
+
+- [ ] Mover el procesamiento de IA y el envío a WhatsApp fuera del webhook síncrono mediante una cola de tareas (por ejemplo, Celery o un worker equivalente) para evitar timeouts y reintentos bajo carga.
+- [ ] Configurar permisos para que el usuario de PostgreSQL pueda crear la extensión `vector` en la base de pruebas, o crearla previamente con un administrador.
+- [ ] Eliminar la base de pruebas existente `test_db_chatbot2026` si quedó incompleta y volver a ejecutar los tests.
+- [ ] Ejecutar toda la suite de tests después de habilitar `pgvector` en la base de pruebas.
+- [ ] Migrar de Python 3.10 a Python 3.11 o superior antes del `2026-10-04` por el aviso de `google.api_core`.
+- [ ] Desactivar `DEBUG` y revisar `ALLOWED_HOSTS` antes de desplegar en un VPS.
+- [ ] Confirmar que `.env` nunca haya sido incluido en el historial de Git y rotar cualquier secreto que haya sido expuesto.
+- [ ] Reducir o desactivar los logs temporales de WhatsApp en producción.
 
 ## Completado: Variables De Entorno
 
@@ -47,12 +59,12 @@ Ctrl + C
 venv\Scripts\python.exe manage.py runserver
 ```
 
-## Completado: Iniciar Ngrok
+## Completado: Iniciar Ngrok Durante Desarrollo
 
-Ngrok está ejecutándose y redirige la URL pública hacia Django:
+Ngrok debe ejecutarse durante las pruebas locales y redirigir la URL pública hacia Django:
 
 ```text
-https://wrongly-sugar-dimmed.ngrok-free.dev
+https://URL-ACTUAL-DE-NGROK.ngrok-free.dev
 ```
 
 ## 1. Configurar El Webhook En Meta
@@ -64,7 +76,7 @@ https://wrongly-sugar-dimmed.ngrok-free.dev
 5. En **Callback URL**, pega exactamente:
 
    ```text
-   https://wrongly-sugar-dimmed.ngrok-free.dev/whatsapp/webhook/
+   https://URL-ACTUAL-DE-NGROK.ngrok-free.dev/whatsapp/webhook/
    ```
 
 6. En **Verify Token**, escribe exactamente el valor de `WHATSAPP_VERIFY_TOKEN` que está en tu `.env`.
@@ -112,11 +124,10 @@ Debes comprobar dos cosas:
 
 2. WhatsApp recibe la respuesta del chatbot.
 
-La prueba automática **Test** de Meta no equivale a un mensaje real. Meta envía
-un payload ficticio que el webhook ignora correctamente porque utiliza un
-`phone_number_id` de prueba diferente al configurado. El último mensaje real
-guardado todavía es ninguno; el único registro existente corresponde a la
-prueba ficticia anterior y quedó con estado `failed`.
+La prueba automática **Test** de Meta no equivale a un mensaje real. Los eventos
+de estado adicionales pueden generar varios `POST /whatsapp/webhook/` con
+respuesta `HTTP 200`. Los mensajes reales ya fueron probados correctamente y
+Meta aceptó la respuesta saliente.
 
 ## Si No Funciona
 
@@ -125,18 +136,19 @@ prueba ficticia anterior y quedó con estado `failed`.
 - No llega ningún `POST`: verifica que el campo `messages` esté suscrito y que ngrok siga activo.
 - Llega el `POST` pero no responde: revisa la terminal de Django y el `WHATSAPP_ACCESS_TOKEN`.
 - Error de firma: confirma que `WHATSAPP_APP_SECRET` corresponde a la aplicación seleccionada en Meta.
-- Si reinicias ngrok y cambia la URL, actualiza la Callback URL en Meta y reinicia Django si cambia el dominio.
+- Si reinicias ngrok y cambia la URL, actualiza la Callback URL en Meta.
 - Si la prueba automática responde `200` pero un mensaje personal no genera un `POST`, revisa en **WhatsApp > API Setup** que tu número personal esté agregado y autorizado como destinatario de prueba. El número debe estar agregado en **To** y debes escribir al número de prueba de Meta, no al revés.
 
 ## Orden Exacto
 
 ```text
-1. Configurar en Meta la Callback URL indicada arriba.
-2. Usar el mismo `WHATSAPP_VERIFY_TOKEN`.
-3. Pulsar **Verify and Save**.
-4. Suscribirse al evento `messages`.
-5. Configurar el destinatario de prueba en **WhatsApp > API Setup**.
-6. Enviar un mensaje real desde el número personal autorizado al número de prueba de Meta.
-7. Confirmar un nuevo `POST` en Django con estado `200`.
-8. Confirmar el registro del mensaje con estado `processed` y la respuesta en WhatsApp.
+1. Iniciar Django y ngrok.
+2. Configurar en Meta la Callback URL actual indicada por ngrok.
+3. Usar el mismo `WHATSAPP_VERIFY_TOKEN`.
+4. Pulsar **Verify and Save**.
+5. Suscribirse al evento `messages`.
+6. Configurar el destinatario de prueba en **WhatsApp > API Setup**.
+7. Enviar un mensaje real desde el número personal autorizado al número de prueba de Meta.
+8. Confirmar un nuevo `POST` en Django con estado `200`.
+9. Confirmar el registro del mensaje con estado `processed` y la respuesta en WhatsApp.
 ```

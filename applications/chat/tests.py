@@ -48,9 +48,19 @@ class ChatFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user('chat@test.com', 'Passw0rd!123', first_name='Chat', last_name='User')
 
-    def test_chat_requires_authentication(self):
+    def test_chat_is_visible_without_authentication(self):
         response = self.client.get(reverse('chat:index'))
-        self.assertRedirects(response, reverse('app_users:login') + '?next=/chat/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Escribe tu pregunta')
+
+    @patch('applications.chat.views.answer_message', return_value='Respuesta pública.')
+    def test_anonymous_user_can_send_messages(self, answer):
+        response = self.client.post(reverse('chat:send'), {'message': 'Hola'})
+        self.assertEqual(response.status_code, 200)
+        conversation = Conversation.objects.get(user__isnull=True)
+        self.assertEqual(conversation.messages.count(), 2)
+        self.assertEqual(response.json()['response'], 'Respuesta pública.')
+        answer.assert_called_once()
 
     @patch('applications.chat.services.generate_response', return_value='Respuesta basada en el artículo.')
     @override_settings(BLOG_SOURCE_ENABLED=True)
@@ -200,6 +210,16 @@ class ChatFlowTests(TestCase):
         self.assertIn('Producto 8 cuesta 89.99', response)
         self.assertIn('El de mayor stock es Producto 8 (98 unidades)', response)
 
+    @patch('applications.chat.services.product_by_id')
+    def test_comparison_with_missing_product_is_rejected(self, product_by_id):
+        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
+        product_by_id.side_effect = [
+            {'id': 1, 'title': 'Producto A', 'price': 10, 'stock': 4},
+            None,
+        ]
+        response = answer_message(conversation, 'Compara los productos 1 y 999')
+        self.assertEqual(response, 'No encontré ese producto en el inventario disponible.')
+
     @patch('applications.chat.services.search_products')
     def test_comparison_list_with_trailing_instruction(self, search_products):
         conversation = Conversation.objects.create(user=self.user, source='dummyjson')
@@ -226,6 +246,12 @@ class ChatFlowTests(TestCase):
         category_products.return_value = [{'title': 'Producto', 'sku': 'A-1', 'price': 5, 'stock': 2}]
         answer_message(conversation, 'Dentro de la categoría belleza, muéstrame productos con precio, stock y SKU.')
         category_products.assert_called_once_with('belleza', 6)
+
+    def test_web_chat_rejects_oversized_messages(self):
+        self.client.force_login(self.user)
+        response = self.client.post(reverse('chat:send'), {'message': 'x' * 4001})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Conversation.objects.count(), 0)
 
     @patch('applications.chat.dummyjson_api._request_json')
     def test_dummyjson_invalid_response_and_api_errors(self, request):

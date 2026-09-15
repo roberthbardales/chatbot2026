@@ -35,12 +35,24 @@ def send_text_message(phone_number, text):
         },
         method='POST',
     )
+    logger.warning(
+        'Sending WhatsApp message: api_version=%s phone_number_id=%s recipient=%s',
+        settings.WHATSAPP_API_VERSION,
+        settings.WHATSAPP_PHONE_NUMBER_ID,
+        f'***{phone_number[-4:]}' if len(phone_number) > 4 else '***',
+    )
     try:
         with urlopen(request, timeout=15) as response:
-            result = json.loads(response.read().decode('utf-8'))
-    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+            response_body = response.read().decode('utf-8')
+            logger.warning('WhatsApp API response: status=%s body_length=%s', response.status, len(response_body))
+            result = json.loads(response_body)
+    except HTTPError as exc:
+        details = exc.read().decode('utf-8', errors='replace')
+        logger.warning('WhatsApp API request failed with HTTP %s: %s', exc.code, details)
+        raise WhatsAppAPIError(details) from exc
+    except (URLError, TimeoutError, ValueError, OSError) as exc:
         logger.warning('WhatsApp API request failed: %s', exc)
-        raise WhatsAppAPIError from exc
+        raise WhatsAppAPIError(str(exc)) from exc
     if not isinstance(result, dict) or not result.get('messages'):
         raise WhatsAppAPIError('Unexpected WhatsApp API response')
     return result

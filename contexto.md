@@ -1,6 +1,6 @@
 # Contexto del proyecto: chatbot2026
 
-Última actualización: 2026-09-10
+Última actualización: 2026-09-14
 
 ## Resumen
 
@@ -8,8 +8,8 @@ Aplicación web Django para gestión de usuarios, autenticación y un MVP de cha
 
 ## Stack
 
-- Python 3.10+
-- Django 3.2.25, actualmente fuera de soporte
+- Python 3.12+
+- Django 4.2.25 LTS
 - PostgreSQL mediante `psycopg2-binary`
 - `pgvector` para búsqueda vectorial en PostgreSQL
 - Configuración por variables de entorno con `django-environ`
@@ -48,9 +48,11 @@ chatbot2026/
 - `LOGIN_URL`: `app_users:login`
 - `LOGIN_REDIRECT_URL`: `app_users:dashboard`
 - `LOGOUT_REDIRECT_URL`: `app_users:login`
+- `CHAT_MAX_MESSAGE_LENGTH` limita a 4000 caracteres los mensajes del chat web.
 - `GEMINI_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
 - `GROQ_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
 - `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_APP_SECRET` se cargan desde `.env`.
+- `WHATSAPP_API_VERSION` se carga desde `.env`; durante la validación actual está configurada como `v26.0`.
 - `ALLOWED_HOSTS` incluye `localhost`, `127.0.0.1` y los dominios `ngrok-free.app` y `ngrok-free.dev` para pruebas locales.
 - `BLOG_SOURCE_ENABLED` controla la disponibilidad de la fuente Blog y actualmente está desactivada por defecto.
 - `EMBEDDING_MODEL` configura el modelo de embeddings; el valor predeterminado es `models/gemini-embedding-001`.
@@ -86,7 +88,7 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 - `/users/update/` - cambio de contraseña
 - `/users/` - dashboard, requiere autenticación
 - `/users/lista/` - listado de usuarios, solo administradores
-- `/chat/` - interfaz del chatbot, requiere autenticación
+- `/chat/` - interfaz pública del chatbot
 - `/chat/send/` - endpoint POST para enviar mensajes del chatbot
 - `/whatsapp/webhook/` - verificación y recepción del webhook de Meta WhatsApp
 
@@ -103,8 +105,10 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 
 ## Chatbot
 
-- Solo los usuarios autenticados pueden acceder al chatbot.
-- Las conversaciones y mensajes se guardan en PostgreSQL asociados al usuario.
+- El chat web puede utilizarse sin autenticación; los usuarios autenticados conservan sus conversaciones asociadas a su cuenta.
+- Las conversaciones anónimas se guardan en PostgreSQL sin usuario y se identifican mediante la sesión del navegador, con un máximo de 20 IDs recordados por sesión.
+- Las conversaciones y mensajes autenticados se guardan en PostgreSQL asociados al usuario.
+- La migración `0007_conversation_anonymous` permite que `Conversation.user` sea nulo.
 - Los roles de mensaje son `user` y `assistant`.
 - Cada conversación conserva el proveedor seleccionado (`gemini` o `groq`).
 - Cada conversación conserva también la fuente seleccionada: `blog` o `dummyjson`; la fuente puede cambiar al enviar una nueva pregunta. La fuente inicial predeterminada es `dummyjson` (Productos).
@@ -133,6 +137,7 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 - El Blog mantiene su RAG textual y está deshabilitado temporalmente mediante `BLOG_SOURCE_ENABLED=False`; su código, modelos, migraciones y pruebas no fueron eliminados.
 - DummyJSON usa RAG vectorial para búsquedas semánticas, mientras que ID, SKU, precio, stock y comparaciones continúan siendo deterministas.
 - Los mensajes cotidianos todavía no tienen una capa dedicada de intención: saludos como `hola amigo` pueden terminar tratándose como búsquedas de productos.
+- El chat web rechaza mensajes vacíos y mensajes de más de `CHAT_MAX_MESSAGE_LENGTH` caracteres.
 - El plan para hacer la conversación más natural está documentado en `natural.md`; contempla saludos, despedidas, agradecimientos, búsquedas amplias y aclaraciones usando el historial.
 - No se usan Redis, Celery ni WebSockets.
 - Las respuestas de Gemini y Groq son síncronas y están sujetas a las cuotas de sus respectivos proyectos.
@@ -144,20 +149,26 @@ El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `Permi
 - Se almacenan contactos en `WhatsAppContact` y mensajes recibidos en `WhatsAppMessage`.
 - El webhook valida el `hub.verify_token` durante la configuración de Meta y la firma `X-Hub-Signature-256` en las notificaciones.
 - El envío de respuestas utiliza la API de WhatsApp Cloud mediante `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`.
+- La carga de credenciales se realiza desde `D:\Proyectos GIT\chatbot2026\.env` mediante `django-environ` en `chatbot2026/settings.py`.
+- La URL de envío utiliza la versión `v26.0` de Graph API durante la validación actual.
 - Django se ejecuta localmente en `127.0.0.1:8000`.
-- Ngrok está activo y apunta a `http://localhost:8000` mediante la URL pública actual `https://wrongly-sugar-dimmed.ngrok-free.dev`.
-- La Callback URL registrada en Meta es `https://wrongly-sugar-dimmed.ngrok-free.dev/whatsapp/webhook/`.
+- Ngrok se utiliza para exponer `http://localhost:8000`; la URL pública puede cambiar al reiniciar el túnel.
+- La Callback URL de Meta debe coincidir con la URL pública activa de ngrok y terminar en `/whatsapp/webhook/`.
 - El webhook ya fue verificado y el campo `messages` aparece suscrito en Meta.
-- Las pruebas automáticas de Meta para `messages` llegan al webhook y responden `HTTP 200`.
+- Los mensajes reales llegan al webhook, el chatbot genera la respuesta y Meta acepta el envío con `HTTP 200`.
+- El envío fue validado con un mensaje real (`hola`) desde el número autorizado `51960174778`; Meta devolvió un ID de mensaje saliente.
+- Un token anterior produjo `HTTP 401` con `OAuthException` código `190`; el token actualizado permite enviar respuestas correctamente.
+- Se añadieron logs temporales seguros en `applications/whatsapp/services.py` y `applications/whatsapp/meta_api.py` para registrar recepción, generación y respuesta de Meta sin exponer tokens.
 - El webhook ignora correctamente los payloads ficticios de Meta cuyo `phone_number_id` no coincide con `WHATSAPP_PHONE_NUMBER_ID`.
-- Todavía no se ha recibido ningún mensaje real desde el número personal autorizado; la base de datos conserva un único mensaje ficticio con estado `failed`.
-- Falta confirmar que el número personal esté agregado y autorizado en **WhatsApp > API Setup**, enviar un mensaje real al número de prueba y verificar un registro `processed` con respuesta.
+- Los eventos de estado adicionales de Meta pueden generar varios `POST /whatsapp/webhook/` con respuesta `HTTP 200` después del mensaje original.
+- El warning de `google.api_core` indica que Python 3.10 dejará de recibir soporte en nuevas versiones después del 2026-10-04; conviene migrar a Python 3.11 o superior.
+- La página de privacidad fue retirada temporalmente: ya no existe la ruta `/privacidad/` ni el enlace correspondiente en la cabecera.
 
 ## Pruebas
 
 Las pruebas principales están en `applications/users/tests.py` e incluyen registro, duplicados, contraseñas, login, cambio de contraseña, permisos del listado y logout.
 
-Las pruebas del chatbot están en `applications/chat/tests.py` e incluyen limpieza de HTML, búsqueda de artículos, autenticación, creación de conversaciones, guardado de mensajes, selección de proveedor, rechazo de mensajes vacíos, errores transaccionales, UUID inválido, coincidencias exactas y parciales, errores ortográficos leves, ambigüedad, SKU, campos faltantes, errores de API y comparaciones por nombres e IDs. Actualmente contiene 25 pruebas.
+Las pruebas del chatbot están en `applications/chat/tests.py` e incluyen acceso anónimo, creación de conversaciones, guardado de mensajes, selección de proveedor, límite de longitud, rechazo de mensajes vacíos, limpieza de HTML, búsqueda de artículos, errores transaccionales, UUID inválido, coincidencias exactas y parciales, errores ortográficos leves, ambigüedad, SKU, campos faltantes, errores de API y comparaciones por nombres e IDs.
 
 Se ejecutaron 20 consultas complejas reales contra DummyJSON y el servicio del chatbot: 20/20 fueron correctas o rechazaron correctamente el producto inexistente. Los precios, stocks y SKU coincidieron con la API.
 
@@ -202,6 +213,7 @@ Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal
 - Implementar la capa de conversación natural descrita en `natural.md`, antes de ejecutar búsquedas textuales o vectoriales.
 - Sustituir Tailwind Play CDN por un proceso de build para producción.
 - Actualizar este archivo cuando cambien modelos, URLs, dependencias, permisos o comandos.
+- Python 3.12 y Django 4.2.25 se usan como objetivo de la migración de dependencias; debe verificarse la instalación del entorno nuevo antes de retirar el entorno anterior.
 
 ## Documentación relacionada
 

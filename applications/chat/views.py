@@ -5,7 +5,6 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.views import View
 from django.views.generic import TemplateView
-from django.contrib.auth.mixins import LoginRequiredMixin
 from django.conf import settings
 
 from .models import BLOG, DUMMYJSON, SOURCE_CHOICES, Conversation, Message
@@ -13,7 +12,17 @@ from .providers import GROQ, PROVIDER_CHOICES
 from .services import answer_message
 
 
-class ChatView(LoginRequiredMixin, TemplateView):
+def _anonymous_conversation_ids(request):
+    return set(request.session.get('anonymous_chat_conversations', []))
+
+
+def _remember_anonymous_conversation(request, conversation):
+    conversation_ids = list(_anonymous_conversation_ids(request))
+    conversation_ids.append(str(conversation.id))
+    request.session['anonymous_chat_conversations'] = conversation_ids[-20:]
+
+
+class ChatView(TemplateView):
     template_name = 'chat/chat.html'
 
     def get_context_data(self, **kwargs):
@@ -21,9 +30,14 @@ class ChatView(LoginRequiredMixin, TemplateView):
         conversation_id = self.request.GET.get('conversation')
         conversation = None
         if conversation_id:
-            conversation = get_object_or_404(
-                Conversation, id=conversation_id, user=self.request.user
-            )
+            if self.request.user.is_authenticated:
+                conversation = get_object_or_404(
+                    Conversation, id=conversation_id, user=self.request.user
+                )
+            elif conversation_id in _anonymous_conversation_ids(self.request):
+                conversation = get_object_or_404(
+                    Conversation, id=conversation_id, user__isnull=True
+                )
         context.update({
             'conversation': conversation,
             'chat_messages': conversation.messages.all() if conversation else [],
@@ -41,7 +55,7 @@ class ChatView(LoginRequiredMixin, TemplateView):
         return context
 
 
-class SendMessageView(LoginRequiredMixin, View):
+class SendMessageView(View):
     def post(self, request, *args, **kwargs):
         text = request.POST.get('message', '').strip()
         return self._send_message(request, text)
@@ -49,10 +63,17 @@ class SendMessageView(LoginRequiredMixin, View):
     def _send_message(self, request, text):
         if not text:
             return JsonResponse({'error': 'Escribe un mensaje antes de enviarlo.'}, status=400)
+        if len(text) > settings.CHAT_MAX_MESSAGE_LENGTH:
+            return JsonResponse({'error': 'El mensaje es demasiado largo.'}, status=400)
         conversation_id = request.POST.get('conversation')
         if conversation_id:
             try:
-                conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
+                if request.user.is_authenticated:
+                    conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
+                elif conversation_id in _anonymous_conversation_ids(request):
+                    conversation = get_object_or_404(Conversation, id=conversation_id, user__isnull=True)
+                else:
+                    return JsonResponse({'error': 'La conversación indicada no es válida.'}, status=404)
             except (ValueError, TypeError, ValidationError):
                 return JsonResponse({'error': 'La conversación indicada no es válida.'}, status=404)
         else:
@@ -66,7 +87,13 @@ class SendMessageView(LoginRequiredMixin, View):
                 return JsonResponse({'error': 'El modelo seleccionado no es válido.'}, status=400)
             if source not in valid_sources:
                 return JsonResponse({'error': 'La fuente seleccionada no es válida.'}, status=400)
-            conversation = Conversation.objects.create(user=request.user, provider=provider, source=source)
+            conversation = Conversation.objects.create(
+                user=request.user if request.user.is_authenticated else None,
+                provider=provider,
+                source=source,
+            )
+            if not request.user.is_authenticated:
+                _remember_anonymous_conversation(request, conversation)
         if conversation_id:
             source = request.POST.get('source', conversation.source)
             valid_sources = {value for value, _ in SOURCE_CHOICES}
