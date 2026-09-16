@@ -180,3 +180,59 @@ El flujo actual procesa WhatsApp directamente desde el webhook. No es necesario 
 sudo journalctl -u chatbot2026 -f
 sudo tail -f /var/log/nginx/error.log
 ```
+
+## Estado Actual Del VPS
+
+El despliegue de producción está operativo con esta configuración:
+
+- Proyecto: `/var/www/chatbot2026`
+- Sistema: Ubuntu
+- Python: `3.10.12`
+- Entorno virtual: `/var/www/chatbot2026/venv`
+- Django: `4.2.25`
+- Gunicorn: `26.2.0`
+- PostgreSQL: `12`
+- Base de datos: `db_chatbot2026`
+- Extensión PostgreSQL `vector`: habilitada
+- Gunicorn: `127.0.0.1:8006`
+- Módulo WSGI: `chatbot2026.wsgi:application`
+- Servicio systemd: `chatbot2026.service`
+- Dominio: `chat-gipix.duckdns.org`
+- HTTPS: configurado y operativo
+- Static files: `/var/www/chatbot2026/staticfiles`
+
+Comprobaciones realizadas:
+
+```text
+systemctl is-enabled chatbot2026 -> enabled
+systemctl is-active chatbot2026  -> active
+curl -I https://chat-gipix.duckdns.org -> HTTP/1.1 200 OK
+python manage.py check -> System check identified no issues
+```
+
+Arquitectura:
+
+```text
+Internet/HTTPS
+    -> Nginx
+    -> Gunicorn 127.0.0.1:8006
+    -> Django chatbot2026
+    -> PostgreSQL db_chatbot2026 + pgvector
+```
+
+No modificar puertos, Nginx, systemd, PostgreSQL, dominio, SSL ni la arquitectura del despliegue salvo que sea estrictamente necesario.
+
+## Actualización De Producción
+
+```bash
+cd /var/www/chatbot2026
+source venv/bin/activate
+git pull
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py check
+systemctl restart chatbot2026
+```
+
+No sobrescribir `.env`, credenciales ni la base de datos durante una actualización.
