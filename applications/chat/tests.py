@@ -44,6 +44,7 @@ class BlogServiceTests(TestCase):
         self.assertEqual(most_active_author(entries), ('Ana', 2))
 
 
+@override_settings(OPENROUTER_API_KEY='')
 class ChatFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user('chat@test.com', 'Passw0rd!123', first_name='Chat', last_name='User')
@@ -52,6 +53,19 @@ class ChatFlowTests(TestCase):
         response = self.client.get(reverse('chat:index'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Escribe tu pregunta')
+        self.assertContains(response, 'Productos DummyJSON')
+        self.assertContains(response, 'Inventario')
+
+    @patch('applications.chat.views.answer_message', return_value='Respuesta DummyJSON.')
+    def test_dummyjson_source_can_be_selected(self, answer):
+        response = self.client.post(reverse('chat:send'), {
+            'message': 'Busca un cargador',
+            'source': 'dummyjson',
+            'provider': 'openrouter',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Conversation.objects.get().source, 'dummyjson')
+        answer.assert_called_once()
 
     @patch('applications.chat.views.answer_message', return_value='Respuesta pública.')
     def test_anonymous_user_can_send_messages(self, answer):
@@ -73,8 +87,8 @@ class ChatFlowTests(TestCase):
         conversation = Conversation.objects.get(user=self.user)
         self.assertEqual(conversation.messages.count(), 2)
         self.assertEqual(conversation.messages.first().role, Message.USER)
-        self.assertEqual(conversation.provider, 'groq')
-        self.assertEqual(conversation.messages.last().provider, 'groq')
+        self.assertEqual(conversation.provider, 'openrouter')
+        self.assertEqual(conversation.messages.last().provider, 'openrouter')
         self.assertEqual(response.json()['response'], 'Respuesta basada en el artículo.')
 
     @patch('applications.chat.services.generate_response', return_value='Respuesta de Groq.')
@@ -82,10 +96,10 @@ class ChatFlowTests(TestCase):
     @patch('applications.chat.services.search_entries', return_value=[])
     def test_selected_provider_is_persisted(self, search, generate):
         self.client.force_login(self.user)
-        response = self.client.post(reverse('chat:send'), {'message': 'Hola', 'provider': 'groq', 'source': 'blog'})
+        response = self.client.post(reverse('chat:send'), {'message': 'Hola', 'provider': 'openrouter', 'source': 'blog'})
         self.assertEqual(response.status_code, 200)
         conversation = Conversation.objects.get(user=self.user)
-        self.assertEqual(conversation.provider, 'groq')
+        self.assertEqual(conversation.provider, 'openrouter')
         generate.assert_called_once()
 
     def test_empty_message_is_rejected(self):
@@ -119,6 +133,33 @@ class ChatFlowTests(TestCase):
         response = answer_message(conversation, 'Compara los productos 1 y 2')
         self.assertIn('Producto A cuesta 10', response)
         self.assertIn('Producto B cuesta 20', response)
+
+    @override_settings(OPENROUTER_API_KEY='configured')
+    @patch('applications.chat.services.generate_response', return_value='Producto seguro cuesta 8 y tiene 6 unidades en stock.')
+    @patch('applications.chat.services.product_by_sku')
+    def test_dummyjson_natural_response_receives_verified_context(self, product_by_sku, generate):
+        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
+        product_by_sku.return_value = {
+            'title': 'Producto seguro', 'sku': 'REAL-1', 'price': 8,
+            'stock': 6, 'description': 'Descripción verificada',
+        }
+        response = answer_message(conversation, 'SKU REAL-1')
+        self.assertEqual(response, 'Producto seguro cuesta 8 y tiene 6 unidades en stock.')
+        prompt = generate.call_args.args[1]
+        self.assertIn('Producto seguro', prompt)
+        self.assertIn('REAL-1', prompt)
+        self.assertIn('8', prompt)
+        self.assertIn('No inventes ni completes', prompt)
+
+    @override_settings(OPENROUTER_API_KEY='configured')
+    @patch('applications.chat.services.generate_response', return_value='Producto seguro cuesta 999 y tiene 6 unidades en stock.')
+    @patch('applications.chat.services.product_by_sku')
+    def test_dummyjson_rejects_unverified_numbers_from_model(self, product_by_sku, generate):
+        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
+        product_by_sku.return_value = {'title': 'Producto seguro', 'sku': 'REAL-1', 'price': 8, 'stock': 6}
+        response = answer_message(conversation, 'SKU REAL-1')
+        self.assertIn('precio 8', response)
+        self.assertNotIn('999', response)
 
     @patch('applications.chat.services.search_products')
     def test_product_question_removes_connector_words(self, search_products):

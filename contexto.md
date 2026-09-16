@@ -1,22 +1,23 @@
 # Contexto del proyecto: chatbot2026
 
-Última actualización: 2026-09-14
+Última actualización: 2026-09-15
 
 ## Resumen
 
-Aplicación web Django para gestión de usuarios, autenticación y un MVP de chatbot basado en los artículos de una API pública externa. La base continúa preparada para evolucionar hacia un sistema de reservas tipo clínica.
+Aplicación Django para usuarios, chat web y atención automatizada de WhatsApp mediante Meta WhatsApp Cloud API. La fuente activa del inventario son dos hojas públicas de Google Sheets y el proveedor de IA activo es OpenRouter.
+
+Neonize no se utiliza. No hay QR ni sesión local de WhatsApp.
 
 ## Stack
 
 - Python 3.12+
 - Django 4.2.25 LTS
 - PostgreSQL mediante `psycopg2-binary`
-- `pgvector` para búsqueda vectorial en PostgreSQL
-- Configuración por variables de entorno con `django-environ`
-- Plantillas HTML con Tailwind Play CDN
-- Gemini API mediante `google-generativeai`, usando `gemini-2.5-flash-lite`
-- Embeddings mediante Gemini `models/gemini-embedding-001`
-- Groq API mediante `groq`, usando `openai/gpt-oss-20b`
+- `django-environ`
+- Meta WhatsApp Cloud API
+- OpenRouter con el modelo configurado en `OPENROUTER_MODEL`
+- Google Sheets publicados como CSV
+- Tailwind Play CDN para las plantillas actuales
 - Zona horaria: `America/Lima`
 - Idioma: `es-pe`
 
@@ -26,197 +27,240 @@ Aplicación web Django para gestión de usuarios, autenticación y un MVP de cha
 chatbot2026/
 ├── manage.py
 ├── requirements.txt
-├── .env                 # local, no versionar
-├── chatbot2026/         # settings, urls, ASGI y WSGI
+├── .env                         # local, no versionar
+├── .envotro                     # referencia local, ignorado por Git
+├── chatbot2026/                 # settings, URLs, ASGI y WSGI
 ├── applications/
-│   ├── home/            # página inicial pública
-│   ├── users/           # usuario custom y autenticación
-│   └── chat/            # chatbot, API del blog y conversaciones
-│   └── whatsapp/        # webhook, contactos y mensajes de WhatsApp
-├── templates/           # plantillas globales
-├── static/              # archivos estáticos fuente
-├── staticfiles/         # salida de collectstatic, ignorada
-├── media/               # archivos subidos, ignorada
+│   ├── home/                    # página inicial pública
+│   ├── users/                   # usuario custom, autenticación y roles
+│   ├── chat/                    # chat web, OpenRouter e inventario
+│   └── whatsapp/                # webhook Meta, worker y Outbox
+├── templates/
+│   └── whatsapp/                # dashboard operativo básico
+├── static/
 └── fixtures/
 ```
 
-## Configuración principal
+## Configuración
+
+La configuración principal está en `chatbot2026/settings.py`.
 
 - `AUTH_USER_MODEL = 'users.User'`
-- Base de datos PostgreSQL configurada desde `.env`
-- `DEBUG`, `SECRET_KEY` y `ALLOWED_HOSTS` vienen del entorno
-- `LOGIN_URL`: `app_users:login`
-- `LOGIN_REDIRECT_URL`: `app_users:dashboard`
-- `LOGOUT_REDIRECT_URL`: `app_users:login`
-- `CHAT_MAX_MESSAGE_LENGTH` limita a 4000 caracteres los mensajes del chat web.
-- `GEMINI_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
-- `GROQ_API_KEY` se carga desde `.env` y no se almacena en PostgreSQL.
-- `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_APP_SECRET` se cargan desde `.env`.
-- `WHATSAPP_API_VERSION` se carga desde `.env`; durante la validación actual está configurada como `v26.0`.
-- `ALLOWED_HOSTS` incluye `localhost`, `127.0.0.1` y los dominios `ngrok-free.app` y `ngrok-free.dev` para pruebas locales.
-- `BLOG_SOURCE_ENABLED` controla la disponibilidad de la fuente Blog y actualmente está desactivada por defecto.
-- `EMBEDDING_MODEL` configura el modelo de embeddings; el valor predeterminado es `models/gemini-embedding-001`.
-- `EMBEDDING_DIMENSIONS` configura la dimensión de los vectores y actualmente es `768`.
-- `VECTOR_SEARCH_THRESHOLD` configura la similitud mínima y actualmente es `0.62`.
-- El modelo Gemini configurado es `gemini-2.5-flash-lite`.
-- El modelo Groq configurado es `openai/gpt-oss-20b`.
-- En producción se activa redirección HTTPS, HSTS, cookies seguras, `X_FRAME_OPTIONS = 'DENY'` y protección de contenido.
-- Los archivos media solo se sirven automáticamente cuando `DEBUG=True`.
+- PostgreSQL usa `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` y `DB_PORT` del `.env`.
+- `SECRET_KEY`, `DEBUG` y `ALLOWED_HOSTS` permanecen en el `.env` actual.
+- Las credenciales de Meta son `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_APP_SECRET` y `WHATSAPP_PHONE_NUMBER_ID`.
+- `WHATSAPP_API_VERSION` define la versión de Graph API.
+- OpenRouter usa `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` y `SYSTEM_PROMPT`.
+- Las variables necesarias también pueden leerse desde `.envotro`; solo se aceptan variables de OpenRouter, Google Sheets, historial, debounce e inventario. Las credenciales de base de datos y Neonize de ese archivo se ignoran.
+- `.envotro` está incluido en `.gitignore` y no debe versionarse.
 
-## Usuario y roles
+Variables de inventario y procesamiento:
 
-El modelo `applications.users.models.User` hereda de `AbstractBaseUser` y `PermissionsMixin`.
+```env
+GOOGLE_SHEET_PRODUCTS_CSV_URL=https://...
+GOOGLE_SHEET_COMBOS_CSV_URL=https://...
+INVENTORY_SYNC_MINUTES=5
+MAX_PRODUCTS_IN_CONTEXT=5
+HISTORY_LIMIT=20
+MESSAGE_DEBOUNCE_SECONDS=6
+WHATSAPP_MAX_MESSAGE_LENGTH=2000
+WHATSAPP_MAX_IMAGE_BYTES=10485760
+```
 
-- Login mediante email (`USERNAME_FIELD = 'email'`)
-- Email único
-- Campos: nombre, apellidos, ocupación, género, fecha de nacimiento y teléfono
-- Roles por `occupation`:
-  - `'0'`: administrador
-  - `'1'`: usuario
-  - `'2'`: empleado
-  - `'3'`: otro
-- Un superusuario supera las comprobaciones de rol.
-- `UserManager` proporciona `create_user()` y `create_superuser()`.
+## Usuarios y permisos
+
+`applications.users.models.User` utiliza email como identificador de login.
+
+- `'0'`: administrador
+- `'1'`: usuario
+- `'2'`: empleado
+- `'3'`: otro
+- El superusuario supera las comprobaciones de rol.
+- El dashboard operativo de WhatsApp y sus APIs solo permiten administradores, empleados y superusuarios.
 
 ## URLs
 
-- `/` - página inicial (`applications.home`)
-- `/admin/` - panel de administración
+- `/` - página inicial pública
+- `/admin/` - administración Django
 - `/users/register/` - registro público
 - `/users/login/` - inicio de sesión
 - `/users/logout/` - cierre de sesión mediante POST
-- `/users/update/` - cambio de contraseña
-- `/users/` - dashboard, requiere autenticación
-- `/users/lista/` - listado de usuarios, solo administradores
+- `/users/` - dashboard de usuario
 - `/chat/` - interfaz pública del chatbot
-- `/chat/send/` - endpoint POST para enviar mensajes del chatbot
-- `/whatsapp/webhook/` - verificación y recepción del webhook de Meta WhatsApp
+- `/chat/send/` - endpoint POST del chat web
+- `/whatsapp/` - dashboard operativo de WhatsApp
+- `/whatsapp/webhook/` - verificación y recepción del webhook de Meta
+- `/whatsapp/api/connection/status` - estado de configuración de Meta
+- `/whatsapp/api/conversations` - listado de contactos/conversaciones
+- `/whatsapp/api/conversations/<id>` - eliminación de una conversación
+- `/whatsapp/api/messages/<id>` - historial de mensajes
+- `/whatsapp/api/messages/<id>/send` - respuesta manual
+- `/whatsapp/api/mode/<id>` - cambio entre IA y humano
 
-## Reglas de negocio actuales
+## Chat web
 
-- El registro público excluye la opción administrativa y el servicio fuerza `occupation=User.USUARIO`.
-- El email duplicado se rechaza con un mensaje amigable.
-- Las contraseñas deben coincidir y cumplir los validadores de Django.
-- La fecha de nacimiento no puede ser futura.
-- El login muestra un mensaje genérico ante credenciales inválidas.
-- Cambiar la contraseña exige la contraseña actual, impide reutilizarla, valida la nueva y cierra la sesión.
-- El logout solo acepta POST y utiliza CSRF.
-- El listado de usuarios devuelve todos los usuarios ordenados por nombre y está protegido por `AdministradorPermisoMixin`.
+- El chat web puede usarse sin autenticación.
+- Las conversaciones autenticadas se asocian al usuario; las anónimas se identifican mediante sesión.
+- El proveedor activo es OpenRouter. El código antiguo de Gemini y Groq se conserva, pero no se ofrece como proveedor activo.
+- La fuente activa del inventario es `google_sheets`.
+- La fuente Blog continúa desactivada por defecto mediante `BLOG_SOURCE_ENABLED=False`.
+- DummyJSON y su RAG vectorial se conservan en el código, pero no se ofrecen ni se consultan desde el flujo activo.
+- El historial usado para OpenRouter está limitado por `HISTORY_LIMIT`.
+- El chat web continúa procesando la respuesta de forma síncrona y la devuelve en la misma solicitud.
 
-## Chatbot
+## OpenRouter
 
-- El chat web puede utilizarse sin autenticación; los usuarios autenticados conservan sus conversaciones asociadas a su cuenta.
-- Las conversaciones anónimas se guardan en PostgreSQL sin usuario y se identifican mediante la sesión del navegador, con un máximo de 20 IDs recordados por sesión.
-- Las conversaciones y mensajes autenticados se guardan en PostgreSQL asociados al usuario.
-- La migración `0007_conversation_anonymous` permite que `Conversation.user` sea nulo.
-- Los roles de mensaje son `user` y `assistant`.
-- Cada conversación conserva el proveedor seleccionado (`gemini` o `groq`).
-- Cada conversación conserva también la fuente seleccionada: `blog` o `dummyjson`; la fuente puede cambiar al enviar una nueva pregunta. La fuente inicial predeterminada es `dummyjson` (Productos).
-- Cada respuesta del asistente guarda el proveedor que la generó.
-- El selector ofrece Gemini 2.5 Flash-Lite y Groq GPT-OSS 20B; Groq es el proveedor predeterminado.
-- No existe fallback automático entre proveedores.
-- La fuente `blog` consulta `https://bardalesweb.duckdns.org/api/entries/entries/` mediante `applications/chat/blog_api.py`.
-- Django busca localmente por título, resumen, categoría y tags porque no se comprobó búsqueda server-side.
-- El contenido HTML se limpia y se limita antes de enviarlo a Gemini.
-- Se usan los últimos mensajes para resolver referencias como “el segundo”.
-- La lista de artículos se cachea localmente durante 5 minutos.
-- La fuente `dummyjson` consulta `https://dummyjson.com/products` mediante `applications/chat/dummyjson_api.py`.
-- DummyJSON permite buscar productos, filtrar por categoría, consultar por ID y buscar SKU recorriendo páginas.
-- El RAG vectorial de DummyJSON utiliza el modelo `ProductDocument` y embeddings almacenados en PostgreSQL mediante `pgvector`.
-- Cada producto se indexa inicialmente como un único documento vectorial.
-- El comando `venv\Scripts\python.exe manage.py index_dummyjson` descarga los productos, calcula hashes y genera embeddings solo para productos nuevos o modificados.
-- La búsqueda semántica usa similitud coseno como respaldo cuando la búsqueda textual no encuentra resultados.
-- La extensión de servidor `vector` está instalada y activa en PostgreSQL; la migración `0006_productdocument` ya fue aplicada.
-- Actualmente hay 194 productos de DummyJSON indexados en la base de datos local.
-- Precio y stock se leen del producto; las comparaciones por ID se responden de forma determinista.
-- Los datos de productos y artículos no se mezclan: cada pregunta usa exclusivamente la fuente activa.
-- Para productos, la coincidencia exacta usa el nombre normalizado y tiene prioridad absoluta. Las coincidencias parciales requieren puntuación mínima de `0.60`; si dos resultados quedan a menos de `0.10`, se consideran ambiguos y se pide aclaración. Estos valores reflejan el buscador actual: una coincidencia exacta obtiene `1.0`, mientras que nombres incompletos o con errores leves quedan normalmente entre `0.60` y `0.90`; por debajo de `0.60` se rechazan.
-- Se normalizan mayúsculas, minúsculas, acentos y apóstrofes; por ejemplo, `Dior J adore` coincide con `Dior J'adore`.
-- Las comparaciones aceptan IDs, nombres, conectores `con`, `entre`, listas separadas por comas y consultas con instrucciones adicionales.
-- Las respuestas de productos son deterministas: el modelo IA no genera ni modifica precios, stock, SKU o resultados de comparación.
-- El Blog mantiene su RAG textual y está deshabilitado temporalmente mediante `BLOG_SOURCE_ENABLED=False`; su código, modelos, migraciones y pruebas no fueron eliminados.
-- DummyJSON usa RAG vectorial para búsquedas semánticas, mientras que ID, SKU, precio, stock y comparaciones continúan siendo deterministas.
-- Los mensajes cotidianos todavía no tienen una capa dedicada de intención: saludos como `hola amigo` pueden terminar tratándose como búsquedas de productos.
-- El chat web rechaza mensajes vacíos y mensajes de más de `CHAT_MAX_MESSAGE_LENGTH` caracteres.
-- El plan para hacer la conversación más natural está documentado en `natural.md`; contempla saludos, despedidas, agradecimientos, búsquedas amplias y aclaraciones usando el historial.
-- No se usan Redis, Celery ni WebSockets.
-- Las respuestas de Gemini y Groq son síncronas y están sujetas a las cuotas de sus respectivos proyectos.
+`applications/chat/providers.py` llama a `https://openrouter.ai/api/v1/chat/completions`.
 
-## WhatsApp
+- Se envían `SYSTEM_PROMPT`, historial, pregunta actual y contexto de inventario.
+- Las imágenes se envían como `data URL` en formato multimodal.
+- Si OpenRouter falla durante WhatsApp, se envía inmediatamente al cliente:
 
-- La aplicación `applications/whatsapp` recibe mensajes mediante `/whatsapp/webhook/`.
-- La migración inicial de WhatsApp ya fue aplicada.
-- Se almacenan contactos en `WhatsAppContact` y mensajes recibidos en `WhatsAppMessage`.
-- El webhook valida el `hub.verify_token` durante la configuración de Meta y la firma `X-Hub-Signature-256` en las notificaciones.
-- El envío de respuestas utiliza la API de WhatsApp Cloud mediante `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`.
-- La carga de credenciales se realiza desde `D:\Proyectos GIT\chatbot2026\.env` mediante `django-environ` en `chatbot2026/settings.py`.
-- La URL de envío utiliza la versión `v26.0` de Graph API durante la validación actual.
-- Django se ejecuta localmente en `127.0.0.1:8000`.
-- Ngrok se utiliza para exponer `http://localhost:8000`; la URL pública puede cambiar al reiniciar el túnel.
-- La Callback URL de Meta debe coincidir con la URL pública activa de ngrok y terminar en `/whatsapp/webhook/`.
-- El webhook ya fue verificado y el campo `messages` aparece suscrito en Meta.
-- Los mensajes reales llegan al webhook, el chatbot genera la respuesta y Meta acepta el envío con `HTTP 200`.
-- El envío fue validado con un mensaje real (`hola`) desde el número autorizado `51960174778`; Meta devolvió un ID de mensaje saliente.
-- Un token anterior produjo `HTTP 401` con `OAuthException` código `190`; el token actualizado permite enviar respuestas correctamente.
-- Se añadieron logs temporales seguros en `applications/whatsapp/services.py` y `applications/whatsapp/meta_api.py` para registrar recepción, generación y respuesta de Meta sin exponer tokens.
-- El webhook ignora correctamente los payloads ficticios de Meta cuyo `phone_number_id` no coincide con `WHATSAPP_PHONE_NUMBER_ID`.
-- Los eventos de estado adicionales de Meta pueden generar varios `POST /whatsapp/webhook/` con respuesta `HTTP 200` después del mensaje original.
-- El warning de `google.api_core` indica que Python 3.10 dejará de recibir soporte en nuevas versiones después del 2026-10-04; conviene migrar a Python 3.11 o superior.
-- La página de privacidad fue retirada temporalmente: ya no existe la ruta `/privacidad/` ni el enlace correspondiente en la cabecera.
+```text
+No pude procesar tu mensaje en este momento. Por favor, inténtalo nuevamente en unos minutos.
+```
 
-## Pruebas
+- El detalle técnico queda en los logs y el mensaje original se marca como fallido.
+- No se muestran claves API ni detalles internos al cliente.
 
-Las pruebas principales están en `applications/users/tests.py` e incluyen registro, duplicados, contraseñas, login, cambio de contraseña, permisos del listado y logout.
+## Google Sheets e inventario
 
-Las pruebas del chatbot están en `applications/chat/tests.py` e incluyen acceso anónimo, creación de conversaciones, guardado de mensajes, selección de proveedor, límite de longitud, rechazo de mensajes vacíos, limpieza de HTML, búsqueda de artículos, errores transaccionales, UUID inválido, coincidencias exactas y parciales, errores ortográficos leves, ambigüedad, SKU, campos faltantes, errores de API y comparaciones por nombres e IDs.
+La sincronización está en `applications/chat/inventory.py` y el comando en `sync_inventory`.
 
-Se ejecutaron 20 consultas complejas reales contra DummyJSON y el servicio del chatbot: 20/20 fueron correctas o rechazaron correctamente el producto inexistente. Los precios, stocks y SKU coincidieron con la API.
+Hoja de productos:
 
-`applications/home/tests.py` todavía no contiene pruebas funcionales.
+```text
+sku, name, category, brand, model, specs, price, stock,
+unit, keywords, description, active
+```
 
-Ejecutar con el entorno virtual del proyecto:
+Hoja de combos:
+
+```text
+name, description, product_skus, combo_price, active
+```
+
+Características:
+
+- Las hojas son públicas y se descargan como CSV sin credenciales de Google.
+- Se aceptan nombres de columnas equivalentes con diferencias de mayúsculas, tildes y traducción básica.
+- Los productos se guardan en `applications.chat.models.Product`.
+- Los combos se guardan en `applications.chat.models.Combo`.
+- Se validan SKU, nombre, duplicados e inventario vacío antes de reemplazar los datos.
+- Si la descarga o validación falla, la transacción no reemplaza el inventario anterior.
+- Los combos relacionados se agregan al contexto cuando comparten SKU con productos encontrados.
+- El worker sincroniza automáticamente según `INVENTORY_SYNC_MINUTES`.
+- La sincronización manual se ejecuta con:
+
+```powershell
+venv\Scripts\python.exe manage.py sync_inventory
+```
+
+Después de la última sincronización verificada había 21 productos y 5 combos.
+
+## WhatsApp con Meta Cloud API
+
+El flujo activo es:
+
+```text
+WhatsApp -> Meta Webhook -> Django encola -> Worker -> OpenRouter -> Outbox -> Meta API
+```
+
+El webhook valida:
+
+- `hub.verify_token` durante la verificación inicial.
+- Firma `X-Hub-Signature-256` en los POST.
+- `phone_number_id` para ignorar payloads de otra aplicación.
+- Mensajes de tipo texto e imagen.
+- Duplicados mediante el `message_id` único.
+
+Los mensajes se almacenan en `WhatsAppMessage` y quedan pendientes para el worker. El texto se limita mediante `WHATSAPP_MAX_MESSAGE_LENGTH`.
+
+Las imágenes se descargan temporalmente desde Meta, se convierten a Base64, se envían a OpenRouter y no se guardan permanentemente. La descarga respeta `WHATSAPP_MAX_IMAGE_BYTES` y conserva el caption de la imagen.
+
+## Worker y cola
+
+El worker está en `applications/whatsapp/management/commands/whatsapp_worker.py`.
+
+```powershell
+venv\Scripts\python.exe manage.py whatsapp_worker
+```
+
+Para una iteración:
+
+```powershell
+venv\Scripts\python.exe manage.py whatsapp_worker --once
+```
+
+Responsabilidades:
+
+- Agrupar mensajes consecutivos por `MESSAGE_DEBOUNCE_SECONDS`.
+- Reclamar mensajes mediante bloqueos de PostgreSQL para evitar procesamiento duplicado entre workers.
+- Respetar el modo IA/humano.
+- Generar respuestas con OpenRouter.
+- Crear respuestas pendientes en `Outbox`.
+- Enviar respuestas a través de Meta.
+- Registrar intentos y errores de salida.
+- Recuperar locks de `Outbox` abandonados durante más de diez minutos.
+- Sincronizar periódicamente Google Sheets.
+- Continuar activo si una iteración individual falla.
+
+`Outbox` desacopla la generación de la respuesta del envío. Si Meta rechaza un envío, se conserva como no enviado y se registra el error para otro intento del worker.
+
+## Modo humano
+
+Cada `WhatsAppContact` tiene modo `ai` o `human`.
+
+- `ai`: el worker genera respuestas automáticas.
+- `human`: los mensajes entrantes se almacenan, pero no se consulta OpenRouter.
+- Las respuestas manuales se agregan a `Outbox` desde el dashboard.
+
+## Base de datos y migraciones
+
+La base de datos fue reiniciada durante esta adaptación. Se conservaron las migraciones y se aplicaron las nuevas migraciones de productos, combos, proveedor OpenRouter, cola, modos y multimedia.
+
+Modelos principales:
+
+- `Conversation` y `Message`: chat web.
+- `Product` y `Combo`: inventario de Google Sheets.
+- `ProductDocument`: código histórico de DummyJSON y pgvector, inactivo.
+- `WhatsAppContact`: contacto, modo y última actividad.
+- `WhatsAppMessage`: mensajes entrantes y respuestas locales.
+- `Outbox`: cola de salida de Meta.
+
+## Comandos habituales
 
 ```powershell
 venv\Scripts\python.exe manage.py check
-venv\Scripts\python.exe manage.py test
 venv\Scripts\python.exe manage.py migrate
-venv\Scripts\python.exe manage.py index_dummyjson
+venv\Scripts\python.exe manage.py sync_inventory
 venv\Scripts\python.exe manage.py runserver
+venv\Scripts\python.exe manage.py whatsapp_worker
+venv\Scripts\python.exe manage.py test
 ```
 
-Las pruebas necesitan PostgreSQL y permisos para crear la base de datos temporal de tests. La migración vectorial requiere además permisos suficientes para crear la extensión `vector` en la base temporal.
+Durante desarrollo, Meta necesita una Callback URL pública de ngrok que termine en `/whatsapp/webhook/`. El servidor web y el worker deben ejecutarse en terminales separadas.
 
-## Convenciones de trabajo
+## Pruebas verificadas
 
-- Mantener secretos únicamente en `.env`; no agregarlos al repositorio.
-- Configurar `GEMINI_API_KEY` y `GROQ_API_KEY` antes de probar el chatbot; nunca escribir las claves directamente en el código.
-- DummyJSON no requiere autenticación. Mantener su cliente separado de `blog_api.py` y `providers.py`.
-- Preferir cambios pequeños y conservar la estructura actual de apps y servicios.
-- La lógica de negocio de usuarios está centralizada en `applications/users/services.py`.
-- Usar los mixins de permisos existentes para vistas protegidas por rol.
-- Mantener los formularios responsables de validaciones de entrada y las vistas delgadas.
-- Verificar el código relevante antes de asumir que este documento está actualizado.
+- `manage.py check`: correcto.
+- `manage.py makemigrations --check`: sin cambios pendientes.
+- `manage.py test`: 45 pruebas correctas.
+- `manage.py whatsapp_worker --once`: correcto.
+- Sincronización real de Google Sheets: 21 productos y 5 combos.
 
-## Riesgos y pendientes conocidos
+## Pendientes y riesgos
 
-- Migrar Django 3.2.25 a una versión soportada, preferiblemente 4.2 LTS o superior.
-- Añadir validaciones estrictas en `UserManager.create_superuser()` para garantizar `is_staff=True` e `is_superuser=True`.
-- Revisar `SECURE_PROXY_SSL_HEADER` según el proxy real del despliegue.
-- Definir correctamente `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` y demás ajustes de producción.
-- Añadir pruebas para usuarios inactivos, panel admin, superusuarios, validaciones de campos y configuración de producción.
-- Manejar específicamente errores de cuota `429 ResourceExhausted` de Gemini para mostrar un mensaje claro y evitar tracebacks innecesarios en los logs.
-- Evaluar una caché compartida si el chatbot se despliega con varios procesos o servidores.
-- Revisar la cuota y facturación de Gemini; el nivel gratuito puede limitar las pruebas diarias y por minuto.
-- Revisar la cuota y disponibilidad del modelo en Groq; se necesita una cuenta y una API key de Groq.
-- Optimizar el indexador para usar embeddings por lotes si el catálogo de DummyJSON crece; actualmente genera embeddings individualmente.
-- Configurar una base de tests con `pgvector` habilitado o permisos adecuados para ejecutar todas las pruebas.
-- Implementar la capa de conversación natural descrita en `natural.md`, antes de ejecutar búsquedas textuales o vectoriales.
-- Sustituir Tailwind Play CDN por un proceso de build para producción.
-- Actualizar este archivo cuando cambien modelos, URLs, dependencias, permisos o comandos.
-- Python 3.12 y Django 4.2.25 se usan como objetivo de la migración de dependencias; debe verificarse la instalación del entorno nuevo antes de retirar el entorno anterior.
+- Probar el flujo completo con un mensaje real de texto e imagen desde Meta después de esta adaptación.
+- Construir una interfaz JavaScript completa para el dashboard; actualmente existen el endpoint y una plantilla operativa básica.
+- El envío exactamente una sola vez no puede garantizarse si el proceso cae después de que Meta acepta el mensaje y antes de actualizar `Outbox`.
+- En producción debe ejecutarse un único worker lógico o mantenerse un mecanismo externo de supervisión.
+- Revisar rotación de la clave de OpenRouter y credenciales que hayan estado expuestas en archivos locales.
+- Desactivar `DEBUG` y revisar `ALLOWED_HOSTS`, HTTPS, CSRF y proxy inverso antes del despliegue.
 
-## Documentación relacionada
+## Convenciones
 
-- `base.md`: documentación extensa del proyecto y su historial.
-- `revisar_futuro.md`: revisión técnica y hallazgos pendientes.
-- `natural.md`: plan para detectar conversación cotidiana, búsquedas amplias y aclaraciones.
+- No versionar `.env`, `.envotro` ni credenciales.
+- Mantener Meta Cloud API como transporte; no agregar Neonize salvo decisión explícita.
+- No reactivar DummyJSON como fuente sin cambiar expresamente la configuración y las pruebas.
+- Ejecutar `check`, migraciones y tests después de modificar modelos o configuración.

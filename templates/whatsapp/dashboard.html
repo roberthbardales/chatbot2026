@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block title %}WhatsApp | Dashboard{% endblock %}
+
+{% block content %}
+<main class="mx-auto max-w-6xl space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-[#0f172a]">Conversaciones de WhatsApp</h1>
+        <p class="text-sm text-[#64748b]">La conexión usa Meta WhatsApp Cloud API. No se requiere QR.</p>
+    </div>
+    <section class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+        <p>Consulta las conversaciones mediante la API autenticada:</p>
+        <code class="mt-3 block rounded bg-gray-50 p-3 text-sm">/whatsapp/api/conversations</code>
+    </section>
+</main>
+{% endblock %}

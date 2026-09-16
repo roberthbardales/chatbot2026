@@ -22,6 +22,24 @@ env = environ.Env(
 # Leer archivo .env
 environ.Env.read_env(BASE_DIR / '.env')
 
+# Optional values imported from the reference project. Only these application
+# settings are read; database and framework credentials are intentionally ignored.
+_OTHER_ENV_KEYS = {
+    'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'SYSTEM_PROMPT',
+    'GOOGLE_SHEET_PRODUCTS_CSV_URL', 'GOOGLE_SHEET_COMBOS_CSV_URL',
+    'INVENTORY_SYNC_MINUTES', 'MAX_PRODUCTS_IN_CONTEXT', 'HISTORY_LIMIT',
+    'MESSAGE_DEBOUNCE_SECONDS', 'DUMMYJSON_SYNC_MINUTES',
+}
+_OTHER_ENV = {}
+_OTHER_ENV_PATH = BASE_DIR / '.envotro'
+if _OTHER_ENV_PATH.exists():
+    for _line in _OTHER_ENV_PATH.read_text(encoding='utf-8').splitlines():
+        if '=' not in _line:
+            continue
+        _key, _value = _line.split('=', 1)
+        if _key in _OTHER_ENV_KEYS:
+            _OTHER_ENV[_key] = _value
+
 # --------------------------------------------------
 # SECURITY
 # --------------------------------------------------
@@ -162,6 +180,12 @@ AUTH_USER_MODEL = 'users.User'
 
 GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
+OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default=_OTHER_ENV.get('OPENROUTER_API_KEY', ''))
+OPENROUTER_MODEL = env('OPENROUTER_MODEL', default=_OTHER_ENV.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini'))
+OPENROUTER_TIMEOUT = env.int('OPENROUTER_TIMEOUT', default=30)
+OPENROUTER_HTTP_REFERER = env('OPENROUTER_HTTP_REFERER', default='http://localhost:8000')
+OPENROUTER_APP_NAME = env('OPENROUTER_APP_NAME', default='chatbot2026')
+SYSTEM_PROMPT = env('SYSTEM_PROMPT', default=_OTHER_ENV.get('SYSTEM_PROMPT', 'Eres un asistente útil y profesional. Responde siempre en español.'))
 BLOG_SOURCE_ENABLED = env.bool('BLOG_SOURCE_ENABLED', default=False)
 EMBEDDING_MODEL = env('EMBEDDING_MODEL', default='models/gemini-embedding-001')
 EMBEDDING_DIMENSIONS = env.int('EMBEDDING_DIMENSIONS', default=768)
@@ -171,10 +195,36 @@ WHATSAPP_ACCESS_TOKEN = env('WHATSAPP_ACCESS_TOKEN', default='')
 WHATSAPP_APP_SECRET = env('WHATSAPP_APP_SECRET', default='')
 WHATSAPP_PHONE_NUMBER_ID = env('WHATSAPP_PHONE_NUMBER_ID', default='')
 WHATSAPP_API_VERSION = env('WHATSAPP_API_VERSION', default='v22.0')
-WHATSAPP_DEFAULT_PROVIDER = env('WHATSAPP_DEFAULT_PROVIDER', default='groq')
+WHATSAPP_DEFAULT_PROVIDER = env('WHATSAPP_DEFAULT_PROVIDER', default='openrouter')
 WHATSAPP_DEFAULT_SOURCE = env('WHATSAPP_DEFAULT_SOURCE', default='dummyjson')
 WHATSAPP_MAX_MESSAGE_LENGTH = env.int('WHATSAPP_MAX_MESSAGE_LENGTH', default=2000)
+WHATSAPP_MAX_IMAGE_BYTES = env.int('WHATSAPP_MAX_IMAGE_BYTES', default=10 * 1024 * 1024)
 CHAT_MAX_MESSAGE_LENGTH = env.int('CHAT_MAX_MESSAGE_LENGTH', default=4000)
+GOOGLE_SHEET_PRODUCTS_CSV_URL = env(
+    'GOOGLE_SHEET_PRODUCTS_CSV_URL',
+    default=_OTHER_ENV.get('GOOGLE_SHEET_PRODUCTS_CSV_URL', ''),
+)
+GOOGLE_SHEET_COMBOS_CSV_URL = env(
+    'GOOGLE_SHEET_COMBOS_CSV_URL',
+    default=_OTHER_ENV.get('GOOGLE_SHEET_COMBOS_CSV_URL', ''),
+)
+DUMMYJSON_SYNC_MINUTES = env.int(
+    'DUMMYJSON_SYNC_MINUTES',
+    default=int(_OTHER_ENV.get('DUMMYJSON_SYNC_MINUTES', '60')),
+)
+INVENTORY_SYNC_MINUTES = env.int(
+    'INVENTORY_SYNC_MINUTES',
+    default=int(_OTHER_ENV.get('INVENTORY_SYNC_MINUTES', '5')),
+)
+MAX_PRODUCTS_IN_CONTEXT = env.int(
+    'MAX_PRODUCTS_IN_CONTEXT',
+    default=int(_OTHER_ENV.get('MAX_PRODUCTS_IN_CONTEXT', '5')),
+)
+HISTORY_LIMIT = env.int('HISTORY_LIMIT', default=int(_OTHER_ENV.get('HISTORY_LIMIT', '20')))
+MESSAGE_DEBOUNCE_SECONDS = env.int(
+    'MESSAGE_DEBOUNCE_SECONDS',
+    default=int(_OTHER_ENV.get('MESSAGE_DEBOUNCE_SECONDS', '6')),
+)
 
 LOGIN_URL = 'app_users:login'
 LOGIN_REDIRECT_URL = 'app_users:dashboard'

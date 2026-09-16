@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
 
-{% block title %}Chat del blog{% endblock %}
+{% block title %}Chat{% endblock %}
 
 {% block content %}
 <section class="mx-auto -my-4 max-w-4xl">
     <div class="mb-3">
-        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Pregunta sobre los artículos</h1>
-        <p class="mt-1 text-slate-600">Consulta productos y continúa la conversación con contexto.</p>
+        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Asistente de consultas</h1>
+        <p class="mt-1 text-slate-600">Elige una fuente y continúa la conversación con contexto.</p>
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -41,7 +41,7 @@
                 <div id="empty-state" class="flex min-h-[5rem] items-center justify-center text-center">
                     <div>
                         <h2 class="mt-2 font-semibold text-slate-900">¿Qué quieres saber?</h2>
-                        <p class="mt-1 text-sm text-slate-500">Prueba con: “¿Tienes artículos sobre GitHub?”</p>
+                        <p class="mt-1 text-sm text-slate-500">Selecciona una fuente y escribe tu consulta.</p>
                     </div>
                 </div>
             {% endif %}
@@ -53,7 +53,7 @@
                 <input id="message" name="message" autocomplete="off" required class="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Escribe tu pregunta...">
                 <button id="send-button" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" type="submit">Enviar</button>
             </div>
-            <p id="status" class="mt-1 hidden text-xs text-slate-500">Consultando artículos y preparando una respuesta...</p>
+            <p id="status" class="mt-1 hidden text-xs text-slate-500">Consultando la fuente y preparando una respuesta...</p>
         </form>
     </div>
 </section>

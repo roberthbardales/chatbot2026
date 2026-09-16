@@ -7,8 +7,8 @@ from django.views import View
 from django.views.generic import TemplateView
 from django.conf import settings
 
-from .models import BLOG, DUMMYJSON, SOURCE_CHOICES, Conversation, Message
-from .providers import GROQ, PROVIDER_CHOICES
+from .models import BLOG, DUMMYJSON, GOOGLE_SHEETS, SOURCE_CHOICES, Conversation, Message
+from .providers import OPENROUTER, PROVIDER_CHOICES
 from .services import answer_message
 
 
@@ -42,14 +42,15 @@ class ChatView(TemplateView):
             'conversation': conversation,
             'chat_messages': conversation.messages.all() if conversation else [],
             'provider_choices': PROVIDER_CHOICES,
-            'default_provider': conversation.provider if conversation else GROQ,
+            'default_provider': conversation.provider if conversation else OPENROUTER,
             'source_choices': (
-                SOURCE_CHOICES if settings.BLOG_SOURCE_ENABLED
-                else ((DUMMYJSON, 'Productos'),)
+                ((BLOG, 'Artículos del blog'), (DUMMYJSON, 'Productos DummyJSON'), (GOOGLE_SHEETS, 'Inventario'))
+                if settings.BLOG_SOURCE_ENABLED
+                else ((DUMMYJSON, 'Productos DummyJSON'), (GOOGLE_SHEETS, 'Inventario'))
             ),
             'default_source': (
-                conversation.source if conversation and conversation.source == DUMMYJSON
-                else DUMMYJSON
+                conversation.source if conversation and conversation.source in {DUMMYJSON, GOOGLE_SHEETS}
+                else GOOGLE_SHEETS
             ),
         })
         return context
@@ -77,12 +78,12 @@ class SendMessageView(View):
             except (ValueError, TypeError, ValidationError):
                 return JsonResponse({'error': 'La conversación indicada no es válida.'}, status=404)
         else:
-            provider = request.POST.get('provider', GROQ)
-            source = request.POST.get('source', DUMMYJSON)
+            provider = request.POST.get('provider', OPENROUTER)
+            source = request.POST.get('source', GOOGLE_SHEETS)
             valid_providers = {value for value, _ in PROVIDER_CHOICES}
-            valid_sources = {value for value, _ in SOURCE_CHOICES}
-            if not settings.BLOG_SOURCE_ENABLED:
-                valid_sources.discard(BLOG)
+            valid_sources = {DUMMYJSON, GOOGLE_SHEETS}
+            if settings.BLOG_SOURCE_ENABLED:
+                valid_sources.add(BLOG)
             if provider not in valid_providers:
                 return JsonResponse({'error': 'El modelo seleccionado no es válido.'}, status=400)
             if source not in valid_sources:
@@ -96,9 +97,9 @@ class SendMessageView(View):
                 _remember_anonymous_conversation(request, conversation)
         if conversation_id:
             source = request.POST.get('source', conversation.source)
-            valid_sources = {value for value, _ in SOURCE_CHOICES}
-            if not settings.BLOG_SOURCE_ENABLED:
-                valid_sources.discard(BLOG)
+            valid_sources = {DUMMYJSON, GOOGLE_SHEETS}
+            if settings.BLOG_SOURCE_ENABLED:
+                valid_sources.add(BLOG)
             if source not in valid_sources:
                 return JsonResponse({'error': 'La fuente seleccionada no es válida.'}, status=400)
             if source != conversation.source:
