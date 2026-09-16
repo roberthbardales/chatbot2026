@@ -34,7 +34,7 @@ chatbot2026/
 │   ├── home/                    # página inicial pública
 │   ├── users/                   # usuario custom, autenticación y roles
 │   ├── chat/                    # chat web, OpenRouter e inventario
-│   └── whatsapp/                # webhook Meta, worker y Outbox
+│   └── whatsapp/                # webhook Meta, procesamiento y Outbox
 ├── templates/
 │   └── whatsapp/                # dashboard operativo básico
 ├── static/
@@ -101,10 +101,10 @@ WHATSAPP_MAX_IMAGE_BYTES=10485760
 
 - El chat web puede usarse sin autenticación.
 - Las conversaciones autenticadas se asocian al usuario; las anónimas se identifican mediante sesión.
-- El proveedor activo es OpenRouter. El código antiguo de Gemini y Groq se conserva, pero no se ofrece como proveedor activo.
+- El único proveedor activo es OpenRouter. Gemini y Groq están desactivados y no se ofrecen como proveedores.
 - La fuente activa del inventario es `google_sheets`.
 - La fuente Blog continúa desactivada por defecto mediante `BLOG_SOURCE_ENABLED=False`.
-- DummyJSON y su RAG vectorial se conservan en el código, pero no se ofrecen ni se consultan desde el flujo activo.
+- DummyJSON y el RAG vectorial están desactivados; el flujo activo usa búsquedas textuales en Google Sheets.
 - El historial usado para OpenRouter está limitado por `HISTORY_LIMIT`.
 - El chat web continúa procesando la respuesta de forma síncrona y la devuelve en la misma solicitud.
 
@@ -149,7 +149,7 @@ Características:
 - Se validan SKU, nombre, duplicados e inventario vacío antes de reemplazar los datos.
 - Si la descarga o validación falla, la transacción no reemplaza el inventario anterior.
 - Los combos relacionados se agregan al contexto cuando comparten SKU con productos encontrados.
-- El worker sincroniza automáticamente según `INVENTORY_SYNC_MINUTES`.
+- La sincronización manual del inventario se ejecuta con `sync_inventory`; el worker opcional también puede sincronizarlo según `INVENTORY_SYNC_MINUTES`.
 - La sincronización manual se ejecuta con:
 
 ```powershell
@@ -163,7 +163,7 @@ Después de la última sincronización verificada había 21 productos y 5 combos
 El flujo activo es:
 
 ```text
-WhatsApp -> Meta Webhook -> Django encola -> Worker -> OpenRouter -> Outbox -> Meta API
+WhatsApp -> Meta Webhook -> Django encola y procesa -> OpenRouter -> Outbox -> Meta API
 ```
 
 El webhook valida:
@@ -174,16 +174,18 @@ El webhook valida:
 - Mensajes de tipo texto e imagen.
 - Duplicados mediante el `message_id` único.
 
-Los mensajes se almacenan en `WhatsAppMessage` y quedan pendientes para el worker. El texto se limita mediante `WHATSAPP_MAX_MESSAGE_LENGTH`.
+Los mensajes se almacenan en `WhatsAppMessage`. El webhook procesa inmediatamente los mensajes nuevos y el texto se limita mediante `WHATSAPP_MAX_MESSAGE_LENGTH`.
 
-Las imágenes se descargan temporalmente desde Meta, se convierten a Base64, se envían a OpenRouter y no se guardan permanentemente. La descarga respeta `WHATSAPP_MAX_IMAGE_BYTES` y conserva el caption de la imagen.
+Las imágenes se descargan temporalmente desde Meta, se convierten a Base64 y se envían a OpenRouter para extraer palabras clave del producto visible. Esas palabras se usan para buscar coincidencias en Google Sheets y la imagen vuelve a acompañar la respuesta final. No se guardan permanentemente; la descarga respeta `WHATSAPP_MAX_IMAGE_BYTES` y conserva el caption.
 
-## Worker y cola
+## Procesamiento y cola
 
-El worker está en `applications/whatsapp/management/commands/whatsapp_worker.py`.
+El webhook procesa directamente los mensajes en `applications/whatsapp/views.py`, por lo que el worker no es necesario para el funcionamiento normal de WhatsApp.
+
+`Outbox` conserva la respuesta antes de enviarla a Meta. El worker permanece disponible como mecanismo opcional de recuperación de mensajes pendientes.
 
 ```powershell
-venv\Scripts\python.exe manage.py whatsapp_worker
+venv\Scripts\python.exe manage.py whatsapp_worker --once  # opcional, reintenta pendientes
 ```
 
 Para una iteración:
@@ -192,26 +194,21 @@ Para una iteración:
 venv\Scripts\python.exe manage.py whatsapp_worker --once
 ```
 
-Responsabilidades:
+Responsabilidades del procesamiento directo:
 
-- Agrupar mensajes consecutivos por `MESSAGE_DEBOUNCE_SECONDS`.
-- Reclamar mensajes mediante bloqueos de PostgreSQL para evitar procesamiento duplicado entre workers.
+- Validar y deduplicar el webhook de Meta.
 - Respetar el modo IA/humano.
 - Generar respuestas con OpenRouter.
-- Crear respuestas pendientes en `Outbox`.
-- Enviar respuestas a través de Meta.
+- Crear y enviar respuestas mediante `Outbox`.
 - Registrar intentos y errores de salida.
-- Recuperar locks de `Outbox` abandonados durante más de diez minutos.
-- Sincronizar periódicamente Google Sheets.
-- Continuar activo si una iteración individual falla.
 
-`Outbox` desacopla la generación de la respuesta del envío. Si Meta rechaza un envío, se conserva como no enviado y se registra el error para otro intento del worker.
+Si Meta rechaza un envío, se conserva como no enviado. Puede reintentarse ejecutando opcionalmente el worker.
 
 ## Modo humano
 
 Cada `WhatsAppContact` tiene modo `ai` o `human`.
 
-- `ai`: el worker genera respuestas automáticas.
+- `ai`: el webhook genera respuestas automáticas.
 - `human`: los mensajes entrantes se almacenan, pero no se consulta OpenRouter.
 - Las respuestas manuales se agregan a `Outbox` desde el dashboard.
 
@@ -235,26 +232,26 @@ venv\Scripts\python.exe manage.py check
 venv\Scripts\python.exe manage.py migrate
 venv\Scripts\python.exe manage.py sync_inventory
 venv\Scripts\python.exe manage.py runserver
-venv\Scripts\python.exe manage.py whatsapp_worker
+venv\Scripts\python.exe manage.py whatsapp_worker --once  # opcional, reintenta pendientes
 venv\Scripts\python.exe manage.py test
 ```
 
-Durante desarrollo, Meta necesita una Callback URL pública de ngrok que termine en `/whatsapp/webhook/`. El servidor web y el worker deben ejecutarse en terminales separadas.
+Durante desarrollo, Meta necesita una Callback URL pública de ngrok que termine en `/whatsapp/webhook/`. Para el flujo normal solo debe ejecutarse el servidor web; el worker es opcional para reintentos.
 
 ## Pruebas verificadas
 
 - `manage.py check`: correcto.
 - `manage.py makemigrations --check`: sin cambios pendientes.
-- `manage.py test`: 45 pruebas correctas.
-- `manage.py whatsapp_worker --once`: correcto.
+- `manage.py test`: verificado en la última ejecución del proyecto.
 - Sincronización real de Google Sheets: 21 productos y 5 combos.
+- Flujo real de WhatsApp con texto: webhook, OpenRouter y envío mediante Meta verificados correctamente sin ejecutar el worker.
 
 ## Pendientes y riesgos
 
-- Probar el flujo completo con un mensaje real de texto e imagen desde Meta después de esta adaptación.
+- Probar el flujo completo con una imagen real desde Meta después de esta adaptación visual.
 - Construir una interfaz JavaScript completa para el dashboard; actualmente existen el endpoint y una plantilla operativa básica.
 - El envío exactamente una sola vez no puede garantizarse si el proceso cae después de que Meta acepta el mensaje y antes de actualizar `Outbox`.
-- En producción debe ejecutarse un único worker lógico o mantenerse un mecanismo externo de supervisión.
+- El procesamiento síncrono del webhook depende de que Google Sheets, OpenRouter y Meta respondan dentro del tiempo permitido por Meta; para mayor robustez puede añadirse una cola supervisada.
 - Revisar rotación de la clave de OpenRouter y credenciales que hayan estado expuestas en archivos locales.
 - Desactivar `DEBUG` y revisar `ALLOWED_HOSTS`, HTTPS, CSRF y proxy inverso antes del despliegue.
 

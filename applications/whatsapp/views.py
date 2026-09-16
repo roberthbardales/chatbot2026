@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import Outbox, WhatsAppContact, WhatsAppMessage
-from .services import enqueue_message
+from .services import enqueue_message, process_outbox, process_pending_messages
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ def webhook(request):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
     try:
+        queued = False
         for entry in payload.get('entry', []):
             for change in entry.get('changes', []):
                 value = change.get('value', {})
@@ -93,14 +94,17 @@ def webhook(request):
                     media_type = image.get('mime_type', '')
                     if not phone_number or not message_id or not text and not media_id:
                         continue
-                    enqueue_message(
+                    queued = enqueue_message(
                         phone_number,
                         contacts.get(phone_number, ''),
                         message_id,
                         text,
                         media_id,
                         media_type,
-                    )
+                    ) or queued
+        if queued:
+            process_pending_messages(force=True)
+            process_outbox()
     except Exception:
         logger.exception('WhatsApp message queueing failed')
         return JsonResponse({'error': 'Message queueing failed'}, status=500)

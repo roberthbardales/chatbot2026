@@ -53,19 +53,15 @@ class ChatFlowTests(TestCase):
         response = self.client.get(reverse('chat:index'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Escribe tu pregunta')
-        self.assertContains(response, 'Productos DummyJSON')
         self.assertContains(response, 'Inventario')
 
-    @patch('applications.chat.views.answer_message', return_value='Respuesta DummyJSON.')
-    def test_dummyjson_source_can_be_selected(self, answer):
+    def test_dummyjson_source_is_disabled(self):
         response = self.client.post(reverse('chat:send'), {
             'message': 'Busca un cargador',
             'source': 'dummyjson',
             'provider': 'openrouter',
         })
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(Conversation.objects.get().source, 'dummyjson')
-        answer.assert_called_once()
+        self.assertEqual(response.status_code, 400)
 
     @patch('applications.chat.views.answer_message', return_value='Respuesta pública.')
     def test_anonymous_user_can_send_messages(self, answer):

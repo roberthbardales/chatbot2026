@@ -10,8 +10,6 @@ from .analytics import (category_counts, entries_by_year, latest_entry,
                         most_active_author, most_liked_entries, oldest_entry)
 from .blog_api import BlogAPIError, clean_content, entry_date, get_all_entries, search_entries
 from .providers import OPENROUTER, ProviderError, generate_response
-from .embeddings import EmbeddingError
-from .vector_search import search_similar_products
 from .dummyjson_api import (DummyJSONError, category_products, product_by_id,
                              product_by_sku, search_products)
 from .inventory import category_products as sheet_category_products
@@ -234,6 +232,19 @@ def answer_message(conversation, text):
 
 
 def answer_sheet_message(conversation, text, image_data_url=None):
+    search_text = text
+    if image_data_url:
+        vision_prompt = '''Analiza la imagen para buscar un producto en un inventario industrial.
+Devuelve únicamente entre 3 y 8 palabras clave concretas que describan el producto visible:
+tipo, nombre, material, conexión, uso, marca o modelo si son legibles.
+No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamente: desconocido.'''
+        visual_description = generate_response(
+            conversation.provider or OPENROUTER,
+            vision_prompt,
+            image_data_url=image_data_url,
+        )
+        if visual_description.strip().lower() != 'desconocido':
+            search_text = f'{text} {visual_description}'.strip()
     sku_match = re.search(r'\bsku\s*[:#-]?\s*([a-z0-9-]+)', text, re.I)
     products = []
     if sku_match:
@@ -246,10 +257,20 @@ def answer_sheet_message(conversation, text, image_data_url=None):
             text,
             re.I,
         )
-        products = (
-            sheet_category_products(category_match.group(1).strip(), settings.MAX_PRODUCTS_IN_CONTEXT)
-            if category_match else sheet_search_products(text, settings.MAX_PRODUCTS_IN_CONTEXT)
-        )
+        if category_match:
+            products = sheet_category_products(category_match.group(1).strip(), settings.MAX_PRODUCTS_IN_CONTEXT)
+        else:
+            queries = [search_text]
+            if image_data_url and search_text:
+                queries.extend(
+                    term for term in _normalize_product_text(search_text).split()
+                    if len(term) > 2
+                )
+            found = {}
+            for query in queries:
+                for product in sheet_search_products(query, settings.MAX_PRODUCTS_IN_CONTEXT):
+                    found[product.get('sku') or product.get('name')] = product
+            products = list(found.values())[:settings.MAX_PRODUCTS_IN_CONTEXT]
     combos = combos_for_products(products)
     history = list(conversation.messages.order_by('-created_at')[:settings.HISTORY_LIMIT])
     context_products = '\n'.join(
@@ -344,28 +365,18 @@ def answer_product_message(conversation, text):
             query = re.sub(r'\s+', ' ', query)
             search_query = query or text
             products = _cached_search_products(search_query, 6)
-            semantic_search = False
             ambiguous = False
             if products:
                 products, ambiguous = _validated_product_matches(search_query, products)
             if ambiguous:
                 return PRODUCT_AMBIGUOUS
             if not products:
-                try:
-                    products = [_document_product(document) for document, _ in search_similar_products(text, 6)]
-                    semantic_search = bool(products)
-                except EmbeddingError:
-                    products = []
-            if not products:
                 fallback_terms = [term for term in _normalize_product_text(search_query).split() if len(term) > 2]
                 fallback = []
                 for term in fallback_terms:
                     fallback.extend(_cached_search_products(term, 6))
                 products = list({product.get('id'): product for product in fallback if product.get('id')}.values())
-            if not semantic_search:
-                products, ambiguous = _validated_product_matches(search_query, products)
-            else:
-                ambiguous = False
+            products, ambiguous = _validated_product_matches(search_query, products)
             if ambiguous:
                 return PRODUCT_AMBIGUOUS
     except DummyJSONError:

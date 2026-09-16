@@ -1,6 +1,6 @@
 # chatbot2026
 
-Aplicación Django para gestión de usuarios y autenticación.
+Aplicación Django para gestión de usuarios, chat web y atención automatizada de WhatsApp mediante Meta WhatsApp Cloud API. Usa Google Sheets como inventario y OpenRouter como único proveedor de IA.
 
 ## Requisitos
 
@@ -35,6 +35,11 @@ INVENTORY_SYNC_MINUTES=5
 MAX_PRODUCTS_IN_CONTEXT=5
 HISTORY_LIMIT=20
 MESSAGE_DEBOUNCE_SECONDS=6
+WHATSAPP_VERIFY_TOKEN=token-de-verificacion
+WHATSAPP_ACCESS_TOKEN=token-de-meta
+WHATSAPP_APP_SECRET=secreto-de-la-app
+WHATSAPP_PHONE_NUMBER_ID=id-del-numero-de-whatsapp
+WHATSAPP_API_VERSION=v26.0
 ```
 
 ## Ejecución
@@ -45,19 +50,31 @@ python manage.py sync_inventory
 python manage.py runserver
 ```
 
-Para recibir y enviar mensajes de WhatsApp, ejecuta el worker en otra terminal:
+Para WhatsApp, configura en Meta Developers una Callback URL pública HTTPS que
+termine en `/whatsapp/webhook/`. El servidor procesa directamente cada mensaje;
+no es necesario ejecutar el worker:
 
 ```powershell
-python manage.py whatsapp_worker
+python manage.py runserver 0.0.0.0:8000
 ```
 
-El webhook de Meta solo guarda los mensajes y responde rápidamente. El worker
-agrupa mensajes consecutivos, consulta Google Sheets, usa OpenRouter y procesa
-la cola `Outbox` mediante Meta WhatsApp Cloud API. Las imágenes se descargan
-temporalmente, se envían al modelo y no se guardan permanentemente.
+El webhook valida la firma de Meta, guarda el mensaje, consulta Google Sheets,
+usa OpenRouter y envía la respuesta mediante Meta WhatsApp Cloud API. Las
+imágenes se descargan temporalmente, se analizan para extraer palabras clave y
+se comparan con los productos del inventario; no se guardan permanentemente.
+Solo se devuelven coincidencias reales del catálogo. Una imagen de un producto
+que no existe en Google Sheets puede ser identificada visualmente, pero se
+responderá que no hay coincidencias.
+
+El worker queda disponible de forma opcional para reintentar mensajes pendientes:
+
+```powershell
+python manage.py whatsapp_worker --once
+```
 
 El dashboard operativo está disponible en `/whatsapp/` para usuarios autenticados.
-El código de DummyJSON permanece en el proyecto, pero no es una fuente activa.
+Gemini, Groq, DummyJSON y el RAG vectorial están desactivados. El inventario
+activo es Google Sheets y la búsqueda de productos es textual, sin embeddings.
 
 ## Pruebas
 

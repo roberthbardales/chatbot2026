@@ -61,8 +61,8 @@ def _create_assistant_message(contact, content):
     )
 
 
-def process_pending_messages():
-    cutoff = timezone.now() - timedelta(seconds=settings.MESSAGE_DEBOUNCE_SECONDS)
+def process_pending_messages(force=False):
+    cutoff = timezone.now() if force else timezone.now() - timedelta(seconds=settings.MESSAGE_DEBOUNCE_SECONDS)
     pending = WhatsAppMessage.objects.filter(
         status=WhatsAppMessage.PENDING,
         is_from_customer=True,

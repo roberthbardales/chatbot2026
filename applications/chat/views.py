@@ -44,12 +44,12 @@ class ChatView(TemplateView):
             'provider_choices': PROVIDER_CHOICES,
             'default_provider': conversation.provider if conversation else OPENROUTER,
             'source_choices': (
-                ((BLOG, 'Artículos del blog'), (DUMMYJSON, 'Productos DummyJSON'), (GOOGLE_SHEETS, 'Inventario'))
+                ((BLOG, 'Artículos del blog'), (GOOGLE_SHEETS, 'Inventario'))
                 if settings.BLOG_SOURCE_ENABLED
-                else ((DUMMYJSON, 'Productos DummyJSON'), (GOOGLE_SHEETS, 'Inventario'))
+                else ((GOOGLE_SHEETS, 'Inventario'),)
             ),
             'default_source': (
-                conversation.source if conversation and conversation.source in {DUMMYJSON, GOOGLE_SHEETS}
+                conversation.source if conversation and conversation.source == GOOGLE_SHEETS
                 else GOOGLE_SHEETS
             ),
         })
@@ -81,7 +81,7 @@ class SendMessageView(View):
             provider = request.POST.get('provider', OPENROUTER)
             source = request.POST.get('source', GOOGLE_SHEETS)
             valid_providers = {value for value, _ in PROVIDER_CHOICES}
-            valid_sources = {DUMMYJSON, GOOGLE_SHEETS}
+            valid_sources = {GOOGLE_SHEETS}
             if settings.BLOG_SOURCE_ENABLED:
                 valid_sources.add(BLOG)
             if provider not in valid_providers:
@@ -97,7 +97,7 @@ class SendMessageView(View):
                 _remember_anonymous_conversation(request, conversation)
         if conversation_id:
             source = request.POST.get('source', conversation.source)
-            valid_sources = {DUMMYJSON, GOOGLE_SHEETS}
+            valid_sources = {GOOGLE_SHEETS}
             if settings.BLOG_SOURCE_ENABLED:
                 valid_sources.add(BLOG)
             if source not in valid_sources:

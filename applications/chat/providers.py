@@ -9,8 +9,6 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 OPENROUTER = 'openrouter'
-GEMINI = 'gemini'
-GROQ = 'groq'
 PROVIDER_CHOICES = (
     (OPENROUTER, 'OpenRouter'),
 )
@@ -18,47 +16,6 @@ PROVIDER_CHOICES = (
 
 class ProviderError(Exception):
     pass
-
-
-def _gemini(prompt: str) -> str:
-    if not settings.GEMINI_API_KEY:
-        raise ProviderError('Gemini API key is not configured')
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash-lite')
-        response = model.generate_content(prompt, request_options={'timeout': 20})
-        text = getattr(response, 'text', '').strip()
-        if not text:
-            raise ProviderError('Gemini returned an empty response')
-        return text
-    except ProviderError:
-        raise
-    except Exception as exc:
-        logger.exception('Gemini request failed')
-        raise ProviderError(str(exc)) from exc
-
-
-def _groq(prompt: str) -> str:
-    if not settings.GROQ_API_KEY:
-        raise ProviderError('Groq API key is not configured')
-    try:
-        from groq import Groq
-        client = Groq(api_key=settings.GROQ_API_KEY, timeout=20)
-        response = client.chat.completions.create(
-            model='openai/gpt-oss-20b',
-            messages=[{'role': 'user', 'content': prompt}],
-            timeout=20,
-        )
-        text = (response.choices[0].message.content or '').strip()
-        if not text:
-            raise ProviderError('Groq returned an empty response')
-        return text
-    except ProviderError:
-        raise
-    except Exception as exc:
-        logger.exception('Groq request failed')
-        raise ProviderError(str(exc)) from exc
 
 
 def _openrouter(prompt, image_data_url=None):
@@ -116,8 +73,6 @@ def _openrouter(prompt, image_data_url=None):
 
 
 _PROVIDERS = {
-    GEMINI: _gemini,
-    GROQ: _groq,
     OPENROUTER: _openrouter,
 }
 
