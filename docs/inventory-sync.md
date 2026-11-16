@@ -89,8 +89,7 @@ reconocen, sin distinguir mayúsculas ni tildes, estos nombres de columna:
 - `precio_anterior` y `url`: si no hay `descripcion`, se guardan como texto en la descripción.
 - Las demás columnas (imágenes, estado de imagen...) se ignoran.
 
-Ya no hay combos: la sincronización no los lee ni los modifica. El modelo
-`Combo` se conserva solo por las migraciones existentes.
+Ya no hay combos: el modelo `Combo` no existe y la sincronización no los lee.
 
 ## Validación y dinero exacto
 

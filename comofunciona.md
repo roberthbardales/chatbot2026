@@ -1,6 +1,6 @@
 # Cómo funciona el chatbot
 
-Guía del flujo completo, desde que el catálogo entra al sistema hasta que el cliente recibe su respuesta. Está escrita a partir del código actual (revisión 2026-11-15); no certifica el estado de producción. Para el detalle técnico por módulo consulta [docs/arquitectura.md](docs/arquitectura.md).
+Guía del flujo completo, desde que el catálogo entra al sistema hasta que el cliente recibe su respuesta. Está escrita a partir del código actual (revisión 2026-11-16); no certifica el estado de producción. Para el detalle técnico por módulo consulta [docs/arquitectura.md](docs/arquitectura.md).
 
 ## 1. La idea central
 
@@ -31,6 +31,8 @@ Son dos procesos que deben estar en marcha: el **servidor web** (Django) y, para
 ## 3. Paso 0: cómo entra el catálogo
 
 El chat **no lee el CSV de Google en cada pregunta**. El catálogo se copia a la tabla `Product` mediante un comando manual:
+
+La hoja se lee desde `GOOGLE_SHEET_PRODUCTS_CSV_URL`, que debe devolver CSV directo; para Google Sheets usa `https://docs.google.com/spreadsheets/d/<ID>/export?format=csv` (el enlace `/edit?usp=sharing` devuelve HTML y la sincronización falla con «Cabeceras CSV ausentes…»). Columnas reconocidas: `ID producto`/`SKU`, `Producto`, `Marca`, `Tipo`, `Precio`, `Stock`, `Disponible`, `Precio anterior` y `URL`; las demás se ignoran. Si hay `Stock`, la cantidad manda sobre `Disponible`. Antes de sincronizar, la base debe tener las migraciones al día (`python manage.py migrate`).
 
 1. `python manage.py sync_inventory` descarga la hoja, la valida y muestra una **vista previa** (productos nuevos, cambiados, desactivados) con una **huella**. No escribe nada.
 2. `python manage.py sync_inventory --apply --confirm HUELLA` vuelve a descargar, comprueba que la huella no cambió y aplica todo en una transacción.
@@ -150,7 +152,7 @@ Es la única lógica que entiende la pregunta. La usan los dos canales.
 
 El servidor rechaza cualquier otra cosa: claves extra, SKU que no estaba entre los recuperados, SKU repetido, campos no permitidos (los permitidos son precio, stock, marca, modelo, categoría, especificaciones y descripción). Si la IA falla, no hay clave o responde algo inválido, se usan **precio y stock** por defecto.
 
-**Paso 6: redacción.** El servidor escribe la frase («…: está a 12.50 y hay 40 unidades.») con los valores de la base de datos. Si falta un dato, dice «no tengo el precio en el inventario». El stock tiene cuatro formas: «hay 8 unidades», «está agotado» (stock 0 o `Disponible = No`), «está disponible; consulta la cantidad exacta» (`Disponible = Sí` sin cantidad) y «no tengo el stock en el inventario» (sin ningún dato). Se guarda `selected_sku` en el contexto para la siguiente pregunta.
+**Paso 6: redacción.** El servidor escribe la frase («…: está a 12.50 y hay 40 unidades.») con los valores de la base de datos. Si falta un dato, dice «no tengo el precio en el inventario». El stock sale de la columna `Stock` de la hoja (p. ej. «hay 13 unidades») y tiene cuatro formas: «hay 8 unidades», «está agotado» (stock 0 o `Disponible = No`), «está disponible; consulta la cantidad exacta» (`Disponible = Sí` sin cantidad) y «no tengo el stock en el inventario» (sin ningún dato). Se guarda `selected_sku` en el contexto para la siguiente pregunta.
 
 ## 7. Ejemplo completo
 
