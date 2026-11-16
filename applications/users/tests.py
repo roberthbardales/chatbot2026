@@ -16,7 +16,6 @@ class UserRegisterViewTests(TestCase):
             'email': 'usuario@test.com',
             'first_name': 'Juan',
             'last_name': 'Pérez',
-            'occupation': '1',
             'gender': 'M',
             'phone': '999888777',
             'password1': 'Passw0rd!123',
@@ -35,7 +34,6 @@ class UserRegisterViewTests(TestCase):
             'email': 'dup@test.com',
             'first_name': 'Otro',
             'last_name': 'User',
-            'occupation': '1',
             'gender': 'M',
             'password1': 'Passw0rd!123',
             'password2': 'Passw0rd!123',
@@ -49,7 +47,6 @@ class UserRegisterViewTests(TestCase):
             'email': 'x@test.com',
             'first_name': 'A',
             'last_name': 'B',
-            'occupation': '1',
             'gender': 'M',
             'password1': 'Passw0rd!123',
             'password2': 'OtraPass0rd!456',
@@ -58,7 +55,8 @@ class UserRegisterViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Las contraseñas no coinciden.')
 
-    def test_register_cannot_create_admin(self):
+    def test_register_ignores_requested_occupation(self):
+        """Aunque el cliente envíe una ocupación (campo ya inexistente), la cuenta siempre es de usuario normal."""
         data = {
             'email': 'admin-attempt@test.com',
             'first_name': 'Atacante',
@@ -69,8 +67,29 @@ class UserRegisterViewTests(TestCase):
             'password2': 'Passw0rd!123',
         }
         response = self.client.post(reverse('app_users:register'), data)
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(User.objects.filter(email=data['email']).exists())
+        self.assertRedirects(response, reverse('app_users:login'))
+        user = User.objects.get(email=data['email'])
+        self.assertEqual(user.occupation, User.USUARIO)
+        self.assertFalse(user.is_superuser or user.is_staff)
+
+    def test_register_form_has_no_occupation_field(self):
+        response = self.client.get(reverse('app_users:register'))
+        self.assertNotIn('occupation', response.context['form'].fields)
+        self.assertNotContains(response, 'Ocupación')
+
+    @override_settings(AUTH_REGISTER_PER_IP=2)
+    def test_register_is_rate_limited_per_ip(self):
+        def register(n):
+            return self.client.post(reverse('app_users:register'), {
+                'email': f'masivo{n}@test.com', 'first_name': 'A', 'last_name': 'B', 'gender': 'M',
+                'password1': 'Passw0rd!123', 'password2': 'Passw0rd!123',
+            })
+        self.assertEqual(register(1).status_code, 302)
+        self.assertEqual(register(2).status_code, 302)
+        blocked = register(3)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn('Retry-After', blocked)
+        self.assertFalse(User.objects.filter(email='masivo3@test.com').exists())
 
 
 @TEST_SETTINGS
@@ -102,6 +121,42 @@ class LoginUserTests(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Email o contraseña incorrectos.')
+
+
+    def test_login_returns_to_requested_internal_page(self):
+        response = self.client.post(reverse('app_users:login') + '?next=/whatsapp/',
+                                    {'email': 'login@test.com', 'password': self.password})
+        self.assertRedirects(response, '/whatsapp/', fetch_redirect_response=False)
+
+    def test_login_ignores_external_or_malicious_next(self):
+        for destination in ['https://sitio-falso.com/', '//sitio-falso.com/', 'javascript:alert(1)', r'/\sitio-falso.com']:
+            with self.subTest(destination=destination):
+                self.client.logout()
+                response = self.client.post(reverse('app_users:login') + '?next=' + destination,
+                                            {'email': 'login@test.com', 'password': self.password})
+                self.assertRedirects(response, reverse('app_users:dashboard'), fetch_redirect_response=False)
+
+    def test_protected_page_sends_user_to_login_keeping_next(self):
+        response = self.client.get(reverse('app_users:lista'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('next=', response['Location'])
+
+    @override_settings(AUTH_LOGIN_PER_EMAIL=3)
+    def test_login_is_rate_limited_per_email_even_with_correct_password(self):
+        for _ in range(3):
+            response = self.client.post(reverse('app_users:login'), {'email': 'login@test.com', 'password': 'mala'})
+            self.assertEqual(response.status_code, 200)
+        blocked = self.client.post(reverse('app_users:login'), {'email': 'LOGIN@test.com', 'password': 'Passw0rd!123'})
+        self.assertEqual(blocked.status_code, 429)
+        self.assertContains(blocked, 'Demasiados intentos', status_code=429)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    @override_settings(AUTH_LOGIN_PER_EMAIL=3)
+    def test_other_emails_are_not_blocked_by_one_accounts_attempts(self):
+        for _ in range(4):
+            self.client.post(reverse('app_users:login'), {'email': 'login@test.com', 'password': 'mala'})
+        response = self.client.post(reverse('app_users:login'), {'email': 'otro@test.com', 'password': 'mala'})
+        self.assertEqual(response.status_code, 200)
 
 
 @TEST_SETTINGS
@@ -159,7 +214,7 @@ class ListaUsuariosViewTests(TestCase):
         response = self.client.get(reverse('app_users:lista'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'usuario@test.com')
-        self.assertQuerysetEqual(
+        self.assertQuerySetEqual(
             response.context['usuarios'],
             list(User.objects.filter(pk__in=[self.admin.pk, self.usuario.pk])),
             ordered=False,

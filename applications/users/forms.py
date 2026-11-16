@@ -8,10 +8,6 @@ class UserRegisterForm(forms.Form):
     email = forms.EmailField(label='Correo electrónico')
     first_name = forms.CharField(label='Nombres', max_length=50)
     last_name = forms.CharField(label='Apellidos', max_length=50)
-    occupation = forms.ChoiceField(
-        label='Ocupación',
-        choices=tuple(choice for choice in User.OCCUPATION_CHOICES if choice[0] != User.ADMINISTRADOR),
-    )
     gender = forms.ChoiceField(label='Género', choices=User.GENDER_CHOICES)
     phone = forms.CharField(label='Celular', max_length=15, required=False)
     date_birth = forms.DateField(label='Fecha de nacimiento', required=False)

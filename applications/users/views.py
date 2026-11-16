@@ -3,12 +3,23 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse, reverse_lazy
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.generic import View
 from django.views.generic.edit import FormView
+
+from applications.chat.limits import LimitExceeded
 
 from .forms import LoginForm, UpdatePasswordForm, UserRegisterForm
 from .mixins import AdministradorPermisoMixin
 from . import services
+
+
+def _too_many_attempts(view, form, exc):
+    """Respuesta 429 con el formulario y el tiempo de espera, sin revelar si el correo existe."""
+    form.add_error(None, f'Demasiados intentos. Espera {exc.retry_after} segundos antes de volver a intentarlo.')
+    response = view.render_to_response(view.get_context_data(form=form), status=429)
+    response['Retry-After'] = str(exc.retry_after)
+    return response
 
 
 class UserRegisterView(FormView):
@@ -17,6 +28,10 @@ class UserRegisterView(FormView):
     success_url = reverse_lazy('app_users:login')
 
     def form_valid(self, form):
+        try:
+            services.throttle_register(self.request)
+        except LimitExceeded as exc:
+            return _too_many_attempts(self, form, exc)
         services.create_user(form.cleaned_data)
         messages.success(self.request, 'Cuenta creada correctamente. Inicia sesión.')
         return super().form_valid(form)
@@ -27,12 +42,25 @@ class LoginUser(FormView):
     form_class = LoginForm
     success_url = reverse_lazy('app_users:dashboard')
 
+    def get_success_url(self):
+        """Vuelve a la página que se quería abrir (`next`), solo si es una dirección interna."""
+        destination = self.request.POST.get('next') or self.request.GET.get('next') or ''
+        if destination and url_has_allowed_host_and_scheme(
+            destination, allowed_hosts={self.request.get_host()}, require_https=self.request.is_secure(),
+        ):
+            return destination
+        return super().get_success_url()
+
     def form_invalid(self, form):
         if not form.non_field_errors():
             form.add_error(None, 'Email o contraseña incorrectos.')
         return super().form_invalid(form)
 
     def form_valid(self, form):
+        try:
+            services.throttle_login(self.request, form.cleaned_data['email'])
+        except LimitExceeded as exc:
+            return _too_many_attempts(self, form, exc)
         user = services.authenticate_user(
             self.request,
             form.cleaned_data['email'],

@@ -63,7 +63,6 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 SYSTEM_PROMPT=tu-prompt-de-GiPiX
 
 GOOGLE_SHEET_PRODUCTS_CSV_URL=https://...
-GOOGLE_SHEET_COMBOS_CSV_URL=https://...
 
 WHATSAPP_VERIFY_TOKEN=tu-token-de-verificacion
 WHATSAPP_ACCESS_TOKEN=tu-token-de-meta
@@ -189,7 +188,7 @@ El despliegue de producción está operativo con esta configuración:
 - Sistema: Ubuntu
 - Python: `3.10.12`
 - Entorno virtual: `/var/www/chatbot2026/venv`
-- Django: `4.2.25`
+- Django: `6.1.3`
 - Gunicorn: `26.2.0`
 - PostgreSQL: `12`
 - Base de datos: `db_chatbot2026`
@@ -217,7 +216,7 @@ Internet/HTTPS
     -> Nginx
     -> Gunicorn 127.0.0.1:8006
     -> Django chatbot2026
-    -> PostgreSQL db_chatbot2026 + pgvector
+    -> PostgreSQL db_chatbot2026
 ```
 
 No modificar puertos, Nginx, systemd, PostgreSQL, dominio, SSL ni la arquitectura del despliegue salvo que sea estrictamente necesario.

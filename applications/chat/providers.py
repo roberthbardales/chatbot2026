@@ -26,6 +26,7 @@ def _openrouter(prompt, image_data_url=None):
         content.append({'type': 'image_url', 'image_url': {'url': image_data_url}})
     payload = {
         'model': settings.OPENROUTER_MODEL,
+        'max_tokens': max(1, settings.AI_MAX_OUTPUT_TOKENS),
         'messages': [
             {'role': 'system', 'content': settings.SYSTEM_PROMPT},
             {'role': 'user', 'content': content},
@@ -87,5 +88,9 @@ def generate_response(provider: str, prompt: str, image_data_url=None) -> str:
         raise ProviderError(f'Unknown chat provider: {provider}') from None
 
     if provider == OPENROUTER:
-        return handler(prompt, image_data_url=image_data_url)
+        if not settings.OPENROUTER_API_KEY:
+            raise ProviderError('OpenRouter API key is not configured')
+        from .limits import ai_admission
+        with ai_admission(prompt, image_data_url):
+            return handler(prompt, image_data_url=image_data_url)
     return handler(prompt)

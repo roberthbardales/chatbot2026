@@ -46,19 +46,7 @@
                     {% endfor %}
                 </div>
 
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div>
-                        <label for="{{ form.occupation.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Ocupación</label>
-                        <select name="{{ form.occupation.html_name }}" id="{{ form.occupation.id_for_label }}"
-                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/30">
-                            {% for value, label in form.fields.occupation.choices %}
-                                <option value="{{ value }}" {% if form.occupation.value == value %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                        {% for error in form.occupation.errors %}
-                            <div class="mt-1 text-sm text-red-600">{{ error }}</div>
-                        {% endfor %}
-                    </div>
+                <div class="grid gap-4">
                     <div>
                         <label for="{{ form.gender.id_for_label }}" class="mb-1 block text-sm font-medium text-[#0f172a]">Género</label>
                         <select name="{{ form.gender.html_name }}" id="{{ form.gender.id_for_label }}"

@@ -1,0 +1,140 @@
+# Límites contra abuso y control local de IA
+
+
+Los límites se guardan en PostgreSQL y se coordinan con bloqueos de fila, no con
+memoria local. Se comparten entre procesos web y workers. No requieren Redis ni
+dependencias adicionales.
+
+## Configuración del `.env` raíz
+
+| Variable | Predeterminado | Función |
+| --- | --- | --- |
+| `CHAT_RATE_WINDOW_SECONDS` | 60 | Ventana de frecuencia, en segundos |
+| `CHAT_RATE_PER_SESSION` | 20 | Peticiones web por sesión y ventana |
+| `CHAT_RATE_PER_USER` | 30 | Peticiones por usuario, compartidas entre sesiones |
+| `CHAT_RATE_PER_IP` | 120 | Peticiones por IP o prefijo IPv6 y ventana |
+| `CHAT_MAX_CONCURRENT_PER_PRINCIPAL` | 1 | Consultas simultáneas por usuario/sesión o contacto WhatsApp |
+| `CHAT_REQUEST_LEASE_SECONDS` | 300 | Plazo mínimo de recuperación de consultas abandonadas |
+| `WHATSAPP_RATE_PER_CONTACT` | 20 | Grupos de mensajes procesados por contacto y ventana |
+| `AI_MAX_CONCURRENT_REQUESTS` | 4 | Llamadas simultáneas globales a OpenRouter |
+| `AI_DAILY_REQUEST_LIMIT` | 1000 | Máximo diario de llamadas reservadas |
+| `AI_DAILY_TOKEN_LIMIT` | 2000000 | Máximo diario de tokens reservados |
+| `AI_MAX_OUTPUT_TOKENS` | 1024 | Máximo de salida enviado a OpenRouter como `max_tokens` |
+| `AI_MAX_PROMPT_CHARACTERS` | 24000 | Máximo de caracteres de pregunta/contexto más instrucciones de sistema |
+| `AI_IMAGE_TOKEN_RESERVE` | 10000 | Reserva adicional por imagen |
+| `AI_BUDGET_ALERT_PERCENT` | 80 | Umbral de aviso en logs, una vez por día |
+
+Los límites de frecuencia y los dos cupos diarios admiten `0` para desactivar ese
+límite específico. La concurrencia se mantiene en al menos 1. El plazo de la
+reserva de una consulta se amplía si hace falta para cubrir tres tiempos de
+espera del proveedor y un margen de 60 segundos.
+
+## Comportamiento web
+
+Las peticiones no vacías dentro del tamaño permitido consumen frecuencia antes
+de validar la conversación y consultar servicios externos. Los errores de campo
+vacío o longitud se rechazan sin consumirla. Se aplican conjuntamente sesión,
+usuario autenticado e IP; cambiar la sesión no evita el límite de IP y cambiar
+de sesión/IP no evita el límite de usuario.
+
+Una denegación devuelve HTTP 429 con JSON `error`, `code`, `retry_after` y la
+cabecera `Retry-After`. El chat muestra una cuenta atrás y conserva el texto para
+reintentarlo. No reenvía automáticamente la pregunta. La denegación no guarda
+mensajes ni crea conversaciones. No se modifica una conversación ajena.
+
+Las llamadas externas se ejecutan fuera de la transacción que guarda los
+mensajes. Las reservas de consumo no desaparecen si falla la persistencia
+posterior de la respuesta. Los mensajes del usuario y asistente se guardan
+juntos al completar la respuesta.
+
+## IP y proxies
+
+La IP se obtiene exclusivamente de `REMOTE_ADDR`. Se ignora `X-Forwarded-For`
+para no confiar en cabeceras que puede falsificar el cliente. Las IPv4 mapeadas
+en IPv6 se normalizan a IPv4; las IPv6 se agrupan por prefijo /64 para que cambiar
+direcciones de privacidad no eluda el contador.
+
+Si hay Nginx, Cloudflare u otro proxy, configura el servidor de entrada para
+establecer una IP de cliente verificada y bloquear el acceso directo que eluda
+ese proxy. Si `REMOTE_ADDR` sigue siendo la IP del proxy, sus clientes comparten
+el contador. No habilites confianza indiscriminada en cabeceras reenviadas.
+
+Las identidades se almacenan como HMAC usando el secreto de Django, no como IP,
+teléfono o correo en texto claro. Cambiar `SECRET_KEY` cambia estas identidades.
+
+## Cupo de IA y dinero real
+
+La protección global se aplica en `generate_response`, por lo que cubre chat,
+WhatsApp y reconocimiento visual. Cada llamada reserva una solicitud y un número
+conservador de tokens: bytes UTF-8 de texto/sistema, margen de estructura, salida
+máxima y reserva configurable de imagen. Una consulta con imagen puede hacer
+más de una llamada y consume más de una reserva.
+
+**No es facturación real ni una garantía de gasto en dólares.** Los precios y la
+tokenización dependen del modelo; las imágenes necesitan una reserva estimada.
+No se consultan precios automáticamente ni se descuentan los tokens no usados.
+Los fallos del proveedor también consumen la reserva, porque pueden haber
+generado consumo remoto. El contador puede sobreestimar el uso y la reserva
+visual puede necesitar ajuste según el modelo.
+
+Para un límite monetario real, configura también el crédito/presupuesto de la
+clave en OpenRouter y supervisa su facturación. El cupo local se reinicia cada
+día UTC. El umbral configurado genera un aviso en logs una vez al día; no se
+añadió envío de correo, SMS ni una plataforma externa de alertas.
+
+## WhatsApp y recuperación
+
+El modo humano evita el consumo de frecuencia del bot. Los límites por contacto
+cuentan grupos procesados, no cada mensaje agrupado. Un bloqueo temporal por
+frecuencia, concurrencia o cupo devuelve los mensajes a `PENDING`, con
+`retry_after_at`, conservando su texto y sin encolar un aviso al cliente.
+
+La espera no consume los intentos de recuperación de mensajes abandonados. Los
+mensajes se retoman cuando vuelve a ejecutarse el procesador después del plazo;
+`force=True` omite el debounce, no los límites de uso. El panel muestra la fecha
+del siguiente intento. Un contexto demasiado grande no se reintenta para siempre:
+se marca fallido y se encola el aviso controlado habitual, respetando el modo humano.
+
+Las reservas de concurrencia se liberan en `finally`. Tras una caída, vencen
+automáticamente. Estos plazos son una protección operativa, no una garantía de
+cancelación de una llamada remota que sobreviva a su plazo.
+
+## Operación
+
+Consultar el cupo local actual, sin llamar a Meta/OpenRouter ni procesar colas:
+
+```powershell
+.\venv\Scripts\python.exe manage.py ai_usage
+```
+
+Limpieza opcional y acotada a las tablas de control, para programar periódicamente:
+
+```powershell
+.\venv\Scripts\python.exe manage.py cleanup_chat_limits
+```
+
+Por defecto conserva contadores recientes durante 7 días y días de consumo
+durante 90 días, además de los bloqueos activos. No borra conversaciones,
+mensajes, inventario ni salidas de WhatsApp. Los valores se ajustan con
+`--retention-days` y `--usage-days`. La limpieza no se ejecutó en la base habitual
+durante esta implementación.
+
+Estas protecciones no sustituyen un WAF, límites de conexiones/tamaño de cuerpo
+en el proxy, CAPTCHA ni defensa frente a ataques distribuidos. Usuarios de una
+misma red pueden compartir el límite de IP y el cupo diario global puede afectar
+a todos cuando se agota; ajusta los valores a tu tráfico y presupuesto.
+
+## Activación
+
+Migraciones nuevas: `chat/0011_usage_controls` y
+`whatsapp/0008_message_rate_deferral`.
+
+Detén los procesos anteriores, ejecuta desde la raíz y reinicia los servicios:
+
+```powershell
+.\venv\Scripts\python.exe manage.py migrate
+```
+
+Las migraciones no se aplicaron a la base habitual durante esta tarea. Las
+pruebas usan su propia base de datos y simulan los proveedores; no se ejecutan
+envíos reales ni sincronizaciones de catálogo.

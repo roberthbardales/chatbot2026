@@ -1,47 +1,349 @@
 from unittest.mock import patch
+from uuid import uuid4
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.test import override_settings
 from django.urls import reverse
 
 from applications.users.models import User
 
-from .blog_api import clean_content, latest_entries, search_entries
-from .dummyjson_api import DummyJSONError, _products, product_by_sku
-from .analytics import most_active_author, oldest_entry
-from .models import Conversation, Message
-from .services import answer_message
+from .models import Conversation, Message, Product
+from .inventory import search_products as search_inventory, search_terms
+from .services import answer_sheet_message
+from .providers import ProviderError
+from types import SimpleNamespace
 
 
-class BlogServiceTests(TestCase):
-    def test_clean_content_removes_markup_and_limits_size(self):
-        result = clean_content('<p>Hola&nbsp;mundo</p><script>secret()</script>', max_chars=20)
-        self.assertEqual(result, 'Hola mundo')
+class ConversationAccessTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user('access@test.com')
+        cls.other_user = User.objects.create_user('other-access@test.com')
+        cls.owned = Conversation.objects.create(user=cls.user)
+        cls.foreign = Conversation.objects.create(user=cls.other_user)
+        cls.anonymous = Conversation.objects.create()
+        cls.unrelated_anonymous = Conversation.objects.create()
+        Message.objects.create(conversation=cls.owned, role=Message.USER, content='Mensaje propio')
+        Message.objects.create(conversation=cls.foreign, role=Message.USER, content='Mensaje privado ajeno')
+        Message.objects.create(conversation=cls.anonymous, role=Message.USER, content='Mensaje anónimo autorizado')
 
-    @patch('applications.chat.blog_api.list_entries')
-    def test_search_entries_scores_title_matches(self, list_entries):
-        list_entries.return_value = [
-            {'id': 1, 'title': 'GitHub básico', 'resume': '', 'category': {}, 'tag': []},
-            {'id': 2, 'title': 'Django', 'resume': 'Uso general', 'category': {}, 'tag': []},
+    def authorize_session(self, *ids):
+        session = self.client.session
+        session['anonymous_chat_conversations'] = [str(value) for value in ids]
+        session.save()
+
+    def test_malformed_ids_return_404_for_authenticated_and_anonymous_visitors(self):
+        for authenticated in [False, True]:
+            if authenticated:
+                self.client.force_login(self.user)
+            for value in ['hola', '123', '   ', 'not-a-uuid', '0' * 33]:
+                with self.subTest(authenticated=authenticated, value=value):
+                    response = self.client.get(reverse('chat:index'), {'conversation': value})
+                    self.assertEqual(response.status_code, 404)
+
+    def test_authenticated_visitor_cannot_open_foreign_or_anonymous_conversations(self):
+        self.client.force_login(self.user)
+        self.authorize_session(self.anonymous.pk)
+        for value in [self.foreign.pk, self.anonymous.pk, uuid4()]:
+            with self.subTest(value=value):
+                response = self.client.get(reverse('chat:index'), {'conversation': str(value)})
+                self.assertEqual(response.status_code, 404)
+                self.assertNotContains(response, 'Mensaje privado ajeno', status_code=404)
+
+    def test_anonymous_session_authorization_does_not_allow_owned_conversations(self):
+        missing = uuid4()
+        self.authorize_session(self.owned.pk, self.anonymous.pk, missing)
+        for value in [self.owned.pk, self.unrelated_anonymous.pk, missing]:
+            with self.subTest(value=value):
+                response = self.client.get(reverse('chat:index'), {'conversation': str(value)})
+                self.assertEqual(response.status_code, 404)
+
+    def test_own_conversation_opens(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse('chat:index'), {'conversation': str(self.owned.pk)})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['conversation'], self.owned)
+        self.assertContains(response, 'Mensaje propio')
+
+    def test_authorized_anonymous_conversation_opens_with_normalized_uuid(self):
+        self.authorize_session(self.anonymous.pk)
+        for value in [str(self.anonymous.pk), str(self.anonymous.pk).upper(), self.anonymous.pk.hex]:
+            with self.subTest(value=value):
+                response = self.client.get(reverse('chat:index'), {'conversation': value})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context['conversation'], self.anonymous)
+
+    @patch('applications.chat.views.answer_message')
+    def test_invalid_or_inaccessible_send_returns_json_without_side_effects(self, answer):
+        before_conversations = Conversation.objects.count()
+        before_messages = Message.objects.count()
+        for authenticated in [False, True]:
+            if authenticated:
+                self.client.force_login(self.user)
+            values = ['hola', str(uuid4()), str(self.foreign.pk), str(self.unrelated_anonymous.pk)]
+            for value in values:
+                with self.subTest(authenticated=authenticated, value=value):
+                    response = self.client.post(reverse('chat:send'), {
+                        'conversation': value, 'message': 'Hola',
+                    })
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(response.json(), {'error': 'La conversación indicada no es válida.'})
+        self.assertEqual(Conversation.objects.count(), before_conversations)
+        self.assertEqual(Message.objects.count(), before_messages)
+        self.foreign.refresh_from_db()
+        self.assertEqual(self.foreign.source, 'google_sheets')
+        answer.assert_not_called()
+
+    @patch('applications.chat.views.answer_message', return_value='Respuesta válida')
+    def test_accessible_conversations_accept_messages(self, answer):
+        self.authorize_session(self.anonymous.pk)
+        response = self.client.post(reverse('chat:send'), {
+            'conversation': str(self.anonymous.pk), 'message': 'Consulta anónima',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.client.force_login(self.user)
+        response = self.client.post(reverse('chat:send'), {
+            'conversation': str(self.owned.pk), 'message': 'Consulta propia',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(answer.call_count, 2)
+
+    @patch('applications.chat.views.answer_message', return_value='Nueva conversación')
+    def test_without_id_opens_chat_and_creates_new_conversation_on_send(self, answer):
+        for authenticated in [False, True]:
+            if authenticated:
+                self.client.force_login(self.user)
+            with self.subTest(authenticated=authenticated):
+                response = self.client.get(reverse('chat:index'))
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNone(response.context['conversation'])
+                response = self.client.post(reverse('chat:send'), {'message': 'Hola'})
+                self.assertEqual(response.status_code, 200)
+                conversation = Conversation.objects.get(pk=response.json()['conversation'])
+                self.assertEqual(conversation.user_id, self.user.pk if authenticated else None)
+
+
+class SheetResponseSafetyTests(SimpleTestCase):
+    def setUp(self):
+        self.conversation = SimpleNamespace(provider='openrouter')
+        self.products = [
+            {'sku': 'VAL-01', 'name': 'Válvula de bronce', 'price': 25, 'stock': 8, 'unit': 'unidades'},
+            {'sku': 'VAL-02', 'name': 'Válvula de acero', 'price': 40, 'stock': 15, 'unit': 'unidades'},
         ]
-        self.assertEqual(search_entries('GitHub')[0]['id'], 1)
+        self.search = patch('applications.chat.services.sheet_search_products', return_value=self.products[:1]).start()
+        self.generate = patch('applications.chat.services.generate_response').start()
+        self.addCleanup(patch.stopall)
 
-    @patch('applications.chat.blog_api.list_entries')
-    def test_latest_entries_orders_by_created_date(self, list_entries):
-        list_entries.return_value = [
-            {'id': 106, 'created': '2023-01-04T10:00:00Z'},
-            {'id': 151, 'created': '2026-03-17T10:00:00Z'},
-        ]
-        self.assertEqual(latest_entries()[0]['id'], 151)
+    def test_no_matches_does_not_call_model(self):
+        self.search.return_value = []
+        self.assertIn('No encontré', answer_sheet_message(self.conversation, 'válvula'))
+        self.generate.assert_not_called()
 
-    def test_analytics_finds_oldest_entry_and_top_author(self):
-        entries = [
-            {'id': 1, 'created': '2022-01-04T10:00:00Z', 'user': {'full_name': 'Ana'}},
-            {'id': 2, 'created': '2023-01-04T10:00:00Z', 'user': {'full_name': 'Ana'}},
-            {'id': 3, 'created': '2024-01-04T10:00:00Z', 'user': {'full_name': 'Luis'}},
-        ]
-        self.assertEqual(oldest_entry(entries)['id'], 1)
-        self.assertEqual(most_active_author(entries), ('Ana', 2))
+    def test_values_are_rendered_from_selected_product(self):
+        self.generate.return_value = '{"productos":[{"sku":"VAL-01","campos":["precio","stock"]}]}'
+        result = answer_sheet_message(self.conversation, 'válvula')
+        self.assertIn('está a 25', result)
+        self.assertIn('hay 8 unidades', result)
+        self.assertNotIn('40', result)
+        self.assertNotIn('VAL-02', result)
+
+    def test_invalid_selections_use_safe_fallback(self):
+        for raw in [
+            'Precio inventado: 999',
+            '{"productos":[{"sku":"VAL-99","campos":["precio"]}]}',
+            '{"productos":[{"sku":"VAL-01","campos":["descuento"]}]}',
+            '{"productos":[{"sku":"VAL-01","campos":["precio"],"precio":999}]}',
+            '{"productos":[]}', 'null',
+            '{"productos":[{"sku":[],"campos":["precio"]}]}',
+        ]:
+            with self.subTest(raw=raw):
+                self.generate.return_value = raw
+                result = answer_sheet_message(self.conversation, 'válvula')
+                self.assertIn('está a 25', result)
+                self.assertNotIn('está a 40', result)
+                self.assertNotIn('999', result)
+
+    def test_provider_failure_preserves_local_information(self):
+        self.generate.side_effect = ProviderError('offline')
+        self.assertIn('hay 8 unidades', answer_sheet_message(self.conversation, 'válvula'))
+
+    def test_missing_values_and_zero_stock_are_distinct(self):
+        self.products[0].update(price=None, stock=0)
+        self.generate.return_value = '{}'
+        result = answer_sheet_message(self.conversation, 'válvula')
+        self.assertIn('no tengo el precio en el inventario', result)
+        self.assertIn('está agotado', result)
+        self.assertNotIn('no tengo el stock', result)
+
+    def test_image_is_only_used_for_search_not_final_selection(self):
+        self.generate.side_effect = ['válvula bronce', '{"productos":[{"sku":"VAL-01","campos":["precio"]}]}']
+        result = answer_sheet_message(self.conversation, 'El usuario envió una imagen.', image_data_url='data:image/jpeg;base64,abc')
+        self.assertIn('posibles coincidencias', result)
+        self.assertIn('número de opción', result)
+        self.generate.assert_called_once()
+
+    def test_unrecognized_image_requests_keywords(self):
+        self.generate.return_value = 'desconocido'
+        result = answer_sheet_message(self.conversation, 'El usuario envió una imagen.', image_data_url='image')
+        self.assertIn('entre 3 y 5 palabras clave', result)
+        self.search.assert_not_called()
+
+    @patch('applications.chat.services.sheet_product_by_sku', return_value=None)
+    def test_unknown_explicit_sku_does_not_suggest_other_products(self, lookup):
+        self.assertIn('No encontré', answer_sheet_message(self.conversation, 'SKU UNKNOWN-1'))
+        self.generate.assert_not_called()
+        self.search.assert_not_called()
+
+
+class InventorySearchTests(TestCase):
+    def product(self, sku, name, **kwargs):
+        return Product.objects.create(sku=sku, name=name, **kwargs)
+
+    def test_fraction_and_inch_variants_are_equivalent(self):
+        for value in ['½', '1/2', 'media pulgada', '0.5 pulgadas', '1/2"']:
+            with self.subTest(value=value):
+                self.assertEqual(search_terms(value), {'dim_inch_1_2'})
+        self.assertEqual(search_terms('1½ pulgadas'), search_terms('1 1/2 pulgadas'))
+
+    def test_synonyms_find_catalog_products(self):
+        self.product('VAL-01', 'Válvula de bronce 1/2 pulgada')
+        self.product('COD-01', 'Codo inoxidable')
+        for query, sku in [('Necesito una llave de paso de media pulgada', 'VAL-01'),
+                           ('válvulas bronze ½', 'VAL-01'), ('elbow inox', 'COD-01')]:
+            with self.subTest(query=query):
+                self.assertEqual([item['sku'] for item in search_inventory(query)], [sku])
+
+    def test_measure_and_connection_are_required_not_partial_matches(self):
+        self.product('VAL-01', 'Válvula de bronce 1/2 pulgada NPT')
+        self.product('VAL-02', 'Válvula de bronce 3/4 pulgada BSP')
+        self.assertEqual([item['sku'] for item in search_inventory('válvula bronce media pulgada NPT')], ['VAL-01'])
+        self.assertEqual(search_inventory('válvula bronce media pulgada BSP'), [])
+        self.assertEqual(search_inventory('válvula bronce ZX999'), [])
+
+    def test_mm_and_inches_are_not_equivalent(self):
+        self.product('MM-15', 'Tubo 15 mm')
+        self.product('IN-15', 'Tubo 15 pulgadas')
+        self.assertEqual([item['sku'] for item in search_inventory('tubería 15 milímetros')], ['MM-15'])
+        self.assertEqual([item['sku'] for item in search_inventory('tubo 15 pulgadas')], ['IN-15'])
+
+    def test_exact_reference_wins_without_confusing_similar_skus(self):
+        self.product('VAL-01', 'Válvula de bronce')
+        self.product('VAL-010', 'Válvula de acero')
+        self.product('ABC/2.5_X', 'Adaptador especial')
+        self.assertEqual([item['sku'] for item in search_inventory('¿Cuánto cuesta val-01?')], ['VAL-01'])
+        self.assertEqual([item['sku'] for item in search_inventory('ABC/2.5_X')], ['ABC/2.5_X'])
+        self.assertEqual(search_inventory('VAL-019'), [])
+
+    def test_inactive_products_are_excluded_and_specs_are_searchable(self):
+        self.product('OFF', 'Válvula bronce', active=False)
+        self.product('ON', 'Válvula', specs='Bronce, conexión NPT 1/2 pulgada')
+        self.assertEqual([item['sku'] for item in search_inventory('válvula bronce NPT media pulgada')], ['ON'])
+        self.assertEqual(search_inventory('OFF'), [])
+
+
+class InventoryConversationTests(TestCase):
+    def setUp(self):
+        self.conversation = Conversation.objects.create()
+        self.valve = Product.objects.create(sku='VAL-01', name='Válvula de bronce 1/2 pulgada', price='25.00', stock=8)
+        self.other = Product.objects.create(sku='VAL-02', name='Válvula de bronce 3/4 pulgada', price='40.00', stock=15)
+        self.generate = patch('applications.chat.services.generate_response', return_value='{}').start()
+        self.addCleanup(patch.stopall)
+
+    def ask(self, text, **kwargs):
+        Message.objects.create(conversation=self.conversation, role=Message.USER, content=text)
+        result = answer_sheet_message(self.conversation, text, **kwargs)
+        Message.objects.create(conversation=self.conversation, role=Message.ASSISTANT, content=result,
+                               inventory_context=getattr(result, 'inventory_context', {}))
+        return result
+
+    def test_follow_up_remembers_sku_but_refreshes_stock_and_price(self):
+        self.ask('SKU VAL-01')
+        Product.objects.filter(pk=self.valve.pk).update(price='27.00', stock=3)
+        answer = self.ask('¿Y cuántas unidades hay?')
+        self.assertIn('hay 3', answer)
+        self.assertIn('está a 27', answer)
+        self.assertNotIn('VAL-02', answer)
+
+    def test_ambiguity_requires_customer_confirmation_without_ai_guessing(self):
+        answer = self.ask('Busco una válvula de bronce')
+        self.assertIn('varios productos', answer)
+        self.assertIn('VAL-01', answer)
+        self.assertIn('VAL-02', answer)
+        self.assertNotIn('está a', answer)
+        self.generate.assert_not_called()
+        follow_up = self.ask('¿Cuántas unidades hay?')
+        self.assertIn('número de opción', follow_up)
+        self.assertNotIn('hay 8', follow_up)
+        self.assertNotIn('hay 15', follow_up)
+
+    def test_customer_can_choose_option_and_then_follow_up(self):
+        self.ask('válvula bronce')
+        selected = self.ask('la segunda')
+        self.assertIn('VAL-02', selected)
+        self.assertNotIn('VAL-01', selected)
+        self.assertIn('hay 15', self.ask('¿Y el stock?'))
+
+    def test_measure_can_disambiguate_previous_options(self):
+        self.ask('válvula bronce')
+        selected = self.ask('la de media pulgada')
+        self.assertIn('VAL-01', selected)
+        self.assertNotIn('VAL-02', selected)
+
+    def test_refinement_does_not_switch_to_unrelated_product(self):
+        Product.objects.create(sku='TUB-01', name='Tubo de una pulgada', specs='1 pulgada')
+        self.ask('válvula bronce')
+        result = self.ask('la de 1 pulgada')
+        self.assertIn('No encontré', result)
+        self.assertNotIn('TUB-01', result)
+
+    def test_new_product_replaces_previous_context(self):
+        Product.objects.create(sku='COD-01', name='Codo de acero', stock=2)
+        self.ask('SKU VAL-01')
+        self.ask('Busco un codo de acero')
+        result = self.ask('¿Cuántas unidades hay?')
+        self.assertIn('COD-01', result)
+        self.assertIn('hay 2', result)
+        self.assertNotIn('VAL-01', result)
+
+    def test_unknown_reference_clears_previous_selection(self):
+        self.ask('SKU VAL-01')
+        self.assertIn('No encontré', self.ask('SKU UNKNOWN-1'))
+        self.assertIn('No encontré', self.ask('¿Y su precio?'))
+
+    def test_removed_or_inactive_selection_is_not_reused(self):
+        self.ask('SKU VAL-01')
+        Product.objects.filter(pk=self.valve.pk).update(active=False)
+        self.assertIn('No encontré', self.ask('¿Y el stock?'))
+
+    def test_other_conversation_context_is_never_used(self):
+        self.ask('SKU VAL-01')
+        self.conversation = Conversation.objects.create()
+        result = self.ask('¿Cuántas unidades hay?')
+        self.assertIn('No encontré', result)
+        self.assertNotIn('VAL-01', result)
+
+    def test_unknown_new_model_does_not_reuse_old_product(self):
+        self.ask('SKU VAL-01')
+        self.assertIn('No encontré', self.ask('¿Precio de la válvula ZX999?'))
+
+    def test_image_match_requires_confirmation_even_for_single_product(self):
+        self.generate.return_value = 'válvula bronce media pulgada'
+        result = self.ask('El usuario envió una imagen.', image_data_url='image')
+        self.assertIn('posibles coincidencias', result)
+        self.assertNotIn('está a', result)
+        self.generate.return_value = '{}'
+        confirmed = self.ask('sí')
+        self.assertIn('VAL-01', confirmed)
+        self.assertIn('está a 25', confirmed)
+
+    def test_web_endpoint_persists_trusted_context(self):
+        first = self.client.post(reverse('chat:send'), {'message': 'SKU VAL-01'})
+        self.assertEqual(first.status_code, 200)
+        conversation = first.json()['conversation']
+        second = self.client.post(reverse('chat:send'), {'message': '¿Y el stock?', 'conversation': conversation})
+        self.assertEqual(second.status_code, 200)
+        self.assertIn('hay 8', second.json()['response'])
+        self.assertEqual(Conversation.objects.get(pk=conversation).messages.last().inventory_context, {'selected_sku': 'VAL-01'})
 
 
 @override_settings(OPENROUTER_API_KEY='')
@@ -53,15 +355,7 @@ class ChatFlowTests(TestCase):
         response = self.client.get(reverse('chat:index'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Escribe tu pregunta')
-        self.assertContains(response, 'Inventario')
-
-    def test_dummyjson_source_is_disabled(self):
-        response = self.client.post(reverse('chat:send'), {
-            'message': 'Busca un cargador',
-            'source': 'dummyjson',
-            'provider': 'openrouter',
-        })
-        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, 'inventario')
 
     @patch('applications.chat.views.answer_message', return_value='Respuesta pública.')
     def test_anonymous_user_can_send_messages(self, answer):
@@ -71,32 +365,6 @@ class ChatFlowTests(TestCase):
         self.assertEqual(conversation.messages.count(), 2)
         self.assertEqual(response.json()['response'], 'Respuesta pública.')
         answer.assert_called_once()
-
-    @patch('applications.chat.services.generate_response', return_value='Respuesta basada en el artículo.')
-    @override_settings(BLOG_SOURCE_ENABLED=True)
-    @patch('applications.chat.services.search_entries')
-    def test_send_creates_conversation_and_messages(self, search, generate):
-        search.return_value = [{'id': 1, 'title': 'GitHub', 'resume': 'Guía', 'content': '<p>Contenido</p>', 'slug': 'github', 'category': {}, 'user': {}}]
-        self.client.force_login(self.user)
-        response = self.client.post(reverse('chat:send'), {'message': 'Háblame de GitHub', 'source': 'blog'})
-        self.assertEqual(response.status_code, 200)
-        conversation = Conversation.objects.get(user=self.user)
-        self.assertEqual(conversation.messages.count(), 2)
-        self.assertEqual(conversation.messages.first().role, Message.USER)
-        self.assertEqual(conversation.provider, 'openrouter')
-        self.assertEqual(conversation.messages.last().provider, 'openrouter')
-        self.assertEqual(response.json()['response'], 'Respuesta basada en el artículo.')
-
-    @patch('applications.chat.services.generate_response', return_value='Respuesta de Groq.')
-    @override_settings(BLOG_SOURCE_ENABLED=True)
-    @patch('applications.chat.services.search_entries', return_value=[])
-    def test_selected_provider_is_persisted(self, search, generate):
-        self.client.force_login(self.user)
-        response = self.client.post(reverse('chat:send'), {'message': 'Hola', 'provider': 'openrouter', 'source': 'blog'})
-        self.assertEqual(response.status_code, 200)
-        conversation = Conversation.objects.get(user=self.user)
-        self.assertEqual(conversation.provider, 'openrouter')
-        generate.assert_called_once()
 
     def test_empty_message_is_rejected(self):
         self.client.force_login(self.user)
@@ -119,182 +387,8 @@ class ChatFlowTests(TestCase):
         })
         self.assertEqual(response.status_code, 404)
 
-    @patch('applications.chat.services.product_by_id')
-    def test_products_can_be_compared_by_id(self, product_by_id):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_id.side_effect = [
-            {'id': 1, 'title': 'Producto A', 'price': 10, 'stock': 4},
-            {'id': 2, 'title': 'Producto B', 'price': 20, 'stock': 8},
-        ]
-        response = answer_message(conversation, 'Compara los productos 1 y 2')
-        self.assertIn('Producto A cuesta 10', response)
-        self.assertIn('Producto B cuesta 20', response)
-
-    @override_settings(OPENROUTER_API_KEY='configured')
-    @patch('applications.chat.services.generate_response', return_value='Producto seguro cuesta 8 y tiene 6 unidades en stock.')
-    @patch('applications.chat.services.product_by_sku')
-    def test_dummyjson_natural_response_receives_verified_context(self, product_by_sku, generate):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_sku.return_value = {
-            'title': 'Producto seguro', 'sku': 'REAL-1', 'price': 8,
-            'stock': 6, 'description': 'Descripción verificada',
-        }
-        response = answer_message(conversation, 'SKU REAL-1')
-        self.assertEqual(response, 'Producto seguro cuesta 8 y tiene 6 unidades en stock.')
-        prompt = generate.call_args.args[1]
-        self.assertIn('Producto seguro', prompt)
-        self.assertIn('REAL-1', prompt)
-        self.assertIn('8', prompt)
-        self.assertIn('No inventes ni completes', prompt)
-
-    @override_settings(OPENROUTER_API_KEY='configured')
-    @patch('applications.chat.services.generate_response', return_value='Producto seguro cuesta 999 y tiene 6 unidades en stock.')
-    @patch('applications.chat.services.product_by_sku')
-    def test_dummyjson_rejects_unverified_numbers_from_model(self, product_by_sku, generate):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_sku.return_value = {'title': 'Producto seguro', 'sku': 'REAL-1', 'price': 8, 'stock': 6}
-        response = answer_message(conversation, 'SKU REAL-1')
-        self.assertIn('precio 8', response)
-        self.assertNotIn('999', response)
-
-    @patch('applications.chat.services.search_products')
-    def test_product_question_removes_connector_words(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.return_value = [{
-            'title': 'Apple iPhone Charger', 'sku': 'MOB-APP-APP-104',
-            'price': 19.99, 'stock': 31,
-        }]
-        response = answer_message(conversation, '¿Cuál es el precio y stock de Apple iPhone Charger?')
-        search_products.assert_called_once_with('Apple iPhone Charger', 6)
-        self.assertIn('19.99', response)
-        self.assertIn('31', response)
-
-    @patch('applications.chat.services.search_products')
-    def test_product_matching_is_case_and_accent_insensitive(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.return_value = [{'title': 'Cámara Digital', 'sku': 'CAM-1', 'price': 10, 'stock': 2}]
-        response = answer_message(conversation, 'camara digital')
-        self.assertIn('Cámara Digital', response)
-
-    @patch('applications.chat.services.search_products')
-    def test_product_partial_and_minor_typo_match(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.return_value = [{'title': 'Apple iPhone Charger', 'sku': 'MOB-1', 'price': 20, 'stock': 3}]
-        self.assertIn('Apple iPhone Charger', answer_message(conversation, 'Apple iPhone Chager'))
-
-    @patch('applications.chat.services.search_products')
-    def test_product_ambiguous_and_nonexistent_are_rejected(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.return_value = [
-            {'title': 'Apple iPhone Charger', 'price': 20, 'stock': 3},
-            {'title': 'Apple iPhone Charger Fast', 'price': 25, 'stock': 4},
-        ]
-        self.assertIn('varios productos', answer_message(conversation, 'Apple iPhone'))
-        search_products.return_value = [{'title': 'Completely Different', 'price': 1, 'stock': 1}]
-        self.assertEqual(answer_message(conversation, 'Apple iPhone Charger'), 'No encontré ese producto en el inventario disponible.')
-
-    @patch('applications.chat.services.product_by_sku')
-    def test_sku_is_exact_and_never_generated(self, product_by_sku):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_sku.return_value = {'title': 'Producto', 'sku': 'REAL-1', 'price': 8, 'stock': 6}
-        response = answer_message(conversation, 'SKU REAL-1')
-        self.assertIn('REAL-1', response)
-        self.assertNotIn('MOB-', response)
-
-    @patch('applications.chat.services.product_by_sku', return_value=None)
-    def test_missing_sku_is_not_invented(self, product_by_sku):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        self.assertEqual(answer_message(conversation, 'SKU UNKNOWN-1'), 'No encontré ese producto en el inventario disponible.')
-
-    @patch('applications.chat.services.product_by_sku')
-    def test_missing_product_fields_are_reported(self, product_by_sku):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_sku.return_value = {'title': 'Producto', 'sku': 'REAL-1'}
-        response = answer_message(conversation, 'SKU REAL-1')
-        self.assertIn('no proporcionado por DummyJSON', response)
-
-    @patch('applications.chat.services.product_by_id')
-    def test_comparison_reports_cheapest_and_highest_stock(self, product_by_id):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_id.side_effect = [
-            {'id': 1, 'title': 'Producto A', 'price': 10, 'stock': 4},
-            {'id': 2, 'title': 'Producto B', 'price': 20, 'stock': 8},
-        ]
-        response = answer_message(conversation, 'Compara los productos 1 y 2 e indica cuál es más económico y cuál tiene mayor stock.')
-        self.assertIn('El más económico es Producto A (10)', response)
-        self.assertIn('El de mayor stock es Producto B (8 unidades)', response)
-
-    @patch('applications.chat.services.search_products')
-    def test_products_can_be_compared_by_name(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.side_effect = [
-            [{'title': 'Powder Canister', 'price': 14.99, 'stock': 89, 'sku': 'A'}],
-            [{'title': 'Red Lipstick', 'price': 12.99, 'stock': 91, 'sku': 'B'}],
-        ]
-        response = answer_message(conversation, 'Compara Powder Canister y Red Lipstick')
-        self.assertIn('El más económico es Red Lipstick (12.99)', response)
-        self.assertIn('El de mayor stock es Red Lipstick (91 unidades)', response)
-
-    @patch('applications.chat.services.product_by_id')
-    def test_comparison_supports_three_product_ids(self, product_by_id):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_id.side_effect = [
-            {'id': 6, 'title': 'Producto 6', 'price': 49.99, 'stock': 29},
-            {'id': 7, 'title': 'Producto 7', 'price': 129.99, 'stock': 58},
-            {'id': 8, 'title': 'Producto 8', 'price': 89.99, 'stock': 98},
-        ]
-        response = answer_message(conversation, 'Compara los productos 6, 7 y 8')
-        self.assertIn('Producto 8 cuesta 89.99', response)
-        self.assertIn('El de mayor stock es Producto 8 (98 unidades)', response)
-
-    @patch('applications.chat.services.product_by_id')
-    def test_comparison_with_missing_product_is_rejected(self, product_by_id):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        product_by_id.side_effect = [
-            {'id': 1, 'title': 'Producto A', 'price': 10, 'stock': 4},
-            None,
-        ]
-        response = answer_message(conversation, 'Compara los productos 1 y 999')
-        self.assertEqual(response, 'No encontré ese producto en el inventario disponible.')
-
-    @patch('applications.chat.services.search_products')
-    def test_comparison_list_with_trailing_instruction(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.side_effect = [
-            [{'title': "Dior J'adore", 'price': 89.99, 'stock': 98, 'sku': 'A'}],
-            [{'title': 'Chanel Coco Noir Eau De', 'price': 129.99, 'stock': 58, 'sku': 'B'}],
-            [{'title': 'Calvin Klein CK One', 'price': 49.99, 'stock': 29, 'sku': 'C'}],
-        ]
-        response = answer_message(conversation, 'Entre Dior J adore, Chanel Coco Noir Eau De y Calvin Klein CK One, compara precio y stock. Indica cuál es más económico y cuál tiene mayor disponibilidad.')
-        self.assertIn('El más económico es Calvin Klein CK One (49.99)', response)
-        self.assertIn("El de mayor stock es Dior J'adore (98 unidades)", response)
-
-    @patch('applications.chat.services.search_products')
-    def test_product_query_ignores_extra_requested_fields(self, search_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        search_products.return_value = [{'title': 'Apple iPhone Charger', 'sku': 'MOB-104', 'price': 19.99, 'stock': 31}]
-        response = answer_message(conversation, '¿Qué precio, stock y SKU tiene Apple iPhone Charger? También dime si está disponible.')
-        search_products.assert_called_once_with('Apple iPhone Charger', 6)
-        self.assertIn('19.99', response)
-
-    @patch('applications.chat.services.category_products')
-    def test_category_query_extracts_only_category(self, category_products):
-        conversation = Conversation.objects.create(user=self.user, source='dummyjson')
-        category_products.return_value = [{'title': 'Producto', 'sku': 'A-1', 'price': 5, 'stock': 2}]
-        answer_message(conversation, 'Dentro de la categoría belleza, muéstrame productos con precio, stock y SKU.')
-        category_products.assert_called_once_with('belleza', 6)
-
     def test_web_chat_rejects_oversized_messages(self):
         self.client.force_login(self.user)
         response = self.client.post(reverse('chat:send'), {'message': 'x' * 4001})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Conversation.objects.count(), 0)
-
-    @patch('applications.chat.dummyjson_api._request_json')
-    def test_dummyjson_invalid_response_and_api_errors(self, request):
-        request.return_value = {'unexpected': []}
-        with self.assertRaises(DummyJSONError):
-            _products(request.return_value)
-        request.side_effect = DummyJSONError
-        with self.assertRaises(DummyJSONError):
-            product_by_sku('UNKNOWN')

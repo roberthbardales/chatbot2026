@@ -1,0 +1,149 @@
+"""Database-backed admission controls shared by web processes and workers."""
+import ipaddress
+import logging
+import math
+import uuid
+from contextlib import contextmanager
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
+from django.utils.crypto import salted_hmac
+
+from .models import AIUsageDay, UsageBucket, UsageLease
+
+logger = logging.getLogger(__name__)
+
+
+class LimitExceeded(Exception):
+    def __init__(self, message, retry_after=60, code='rate_limit'):
+        super().__init__(message)
+        self.retry_after = max(1, int(math.ceil(retry_after)))
+        self.code = code
+
+
+def identity(kind, value):
+    return kind + ':' + salted_hmac('chat-admission', str(value)).hexdigest()
+
+
+def _bucket(key, now):
+    UsageBucket.objects.get_or_create(key=key, defaults={'window_started_at': now})
+    bucket = UsageBucket.objects.select_for_update().get(key=key)
+    if key.startswith('lock:'):
+        bucket.window_started_at = now
+        bucket.save(update_fields=('window_started_at',))
+    return bucket
+
+
+def enforce_rates(rules, window=None):
+    now = timezone.now()
+    window = max(1, window or settings.CHAT_RATE_WINDOW_SECONDS)
+    # Sorted locks avoid deadlocks when identities overlap across requests.
+    with transaction.atomic():
+        for key, maximum in sorted(rules):
+            if maximum <= 0:
+                continue
+            bucket = _bucket('rate:' + key, now)
+            end = bucket.window_started_at + timedelta(seconds=window)
+            if end <= now:
+                bucket.window_started_at = now
+                bucket.count = 0
+                end = now + timedelta(seconds=window)
+            if bucket.count >= maximum:
+                raise LimitExceeded('Has alcanzado el límite de consultas. Espera antes de volver a intentarlo.',
+                                    (end - now).total_seconds())
+            bucket.count += 1
+            bucket.save(update_fields=('window_started_at', 'count'))
+
+
+def client_address(request):
+    """Dirección del cliente (IPv6 agrupada por /64). Ignora X-Forwarded-For: lo controla el atacante salvo que un proxy lo sanee."""
+    try:
+        parsed = ipaddress.ip_address(request.META.get('REMOTE_ADDR', ''))
+        if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+            parsed = parsed.ipv4_mapped
+        return str(ipaddress.ip_network(f'{parsed}/64', strict=False).network_address) if parsed.version == 6 else str(parsed)
+    except ValueError:
+        return 'unknown'
+
+
+def admit_web_request(request):
+    session_identity = request.session.get('chat_rate_identity')
+    if not session_identity:
+        session_identity = str(uuid.uuid4())
+        request.session['chat_rate_identity'] = session_identity
+    address = client_address(request)
+    session_key = identity('session', session_identity)
+    rules = [(session_key, settings.CHAT_RATE_PER_SESSION),
+             (identity('ip', address), settings.CHAT_RATE_PER_IP)]
+    principal = session_key
+    if request.user.is_authenticated:
+        principal = identity('user', request.user.pk)
+        rules.append((principal, settings.CHAT_RATE_PER_USER))
+    enforce_rates(rules)
+    return principal
+
+
+@contextmanager
+def principal_slot(principal):
+    scope = 'request:' + principal
+    now = timezone.now()
+    with transaction.atomic():
+        _bucket('lock:' + scope, now)
+        UsageLease.objects.filter(scope=scope, expires_at__lte=now).delete()
+        expiries = list(UsageLease.objects.filter(scope=scope, expires_at__gt=now).values_list('expires_at', flat=True))
+        if len(expiries) >= max(1, settings.CHAT_MAX_CONCURRENT_PER_PRINCIPAL):
+            raise LimitExceeded('Ya hay una consulta en curso. Espera a que termine.',
+                                (min(expiries) - now).total_seconds(), 'concurrency_limit')
+        lease = UsageLease.objects.create(scope=scope, expires_at=now + timedelta(
+            seconds=max(settings.CHAT_REQUEST_LEASE_SECONDS, settings.OPENROUTER_TIMEOUT * 3 + 60)))
+    try:
+        yield
+    finally:
+        UsageLease.objects.filter(pk=lease.pk).delete()
+
+
+@contextmanager
+def ai_admission(prompt, image_data_url=None):
+    if len(prompt) + len(settings.SYSTEM_PROMPT) > settings.AI_MAX_PROMPT_CHARACTERS:
+        raise LimitExceeded('La consulta contiene demasiado contexto. Reduce su tamaño.', 60, 'context_limit')
+    # Conservative text reservation, not billed tokens or a dollar estimate.
+    reserved = len(prompt.encode('utf-8')) + len(settings.SYSTEM_PROMPT.encode('utf-8')) + 64
+    reserved += max(1, settings.AI_MAX_OUTPUT_TOKENS)
+    if image_data_url:
+        reserved += max(1, settings.AI_IMAGE_TOKEN_RESERVE)
+    now = timezone.now()
+    next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    with transaction.atomic():
+        _bucket('lock:ai:global', now)
+        UsageLease.objects.filter(scope='ai:global', expires_at__lte=now).delete()
+        expiries = list(UsageLease.objects.filter(scope='ai:global', expires_at__gt=now).values_list('expires_at', flat=True))
+        if len(expiries) >= max(1, settings.AI_MAX_CONCURRENT_REQUESTS):
+            raise LimitExceeded('El servicio de IA está ocupado. Inténtalo más tarde.',
+                                (min(expiries) - now).total_seconds(), 'ai_concurrency_limit')
+        usage, _ = AIUsageDay.objects.get_or_create(day=now.date())
+        usage = AIUsageDay.objects.select_for_update().get(pk=usage.pk)
+        if (settings.AI_DAILY_REQUEST_LIMIT > 0 and usage.requests >= settings.AI_DAILY_REQUEST_LIMIT) or (
+            settings.AI_DAILY_TOKEN_LIMIT > 0 and usage.reserved_tokens + reserved > settings.AI_DAILY_TOKEN_LIMIT
+        ):
+            logger.warning('AI daily budget blocked: day=%s requests=%s reserved_tokens=%s', usage.day, usage.requests, usage.reserved_tokens)
+            raise LimitExceeded('El servicio de IA alcanzó su cupo diario. Inténtalo más tarde.',
+                                (next_day - now).total_seconds(), 'daily_budget')
+        usage.requests += 1
+        usage.reserved_tokens += reserved
+        threshold = min(100, max(1, settings.AI_BUDGET_ALERT_PERCENT)) / 100
+        alert = (settings.AI_DAILY_REQUEST_LIMIT > 0 and usage.requests >= settings.AI_DAILY_REQUEST_LIMIT * threshold) or (
+            settings.AI_DAILY_TOKEN_LIMIT > 0 and usage.reserved_tokens >= settings.AI_DAILY_TOKEN_LIMIT * threshold
+        )
+        should_alert = alert and not usage.alerted
+        usage.alerted = usage.alerted or alert
+        usage.save(update_fields=('requests', 'reserved_tokens', 'alerted'))
+        if should_alert:
+            transaction.on_commit(lambda: logger.warning(
+                'AI budget alert: day=%s requests=%s reserved_tokens=%s', usage.day, usage.requests, usage.reserved_tokens))
+        lease = UsageLease.objects.create(scope='ai:global', expires_at=now + timedelta(seconds=max(60, settings.OPENROUTER_TIMEOUT + 30)))
+    try:
+        yield
+    finally:
+        UsageLease.objects.filter(pk=lease.pk).delete()

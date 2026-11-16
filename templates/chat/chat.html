@@ -6,19 +6,11 @@
 <section class="mx-auto -my-4 max-w-4xl">
     <div class="mb-3">
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Asistente de consultas</h1>
-        <p class="mt-1 text-slate-600">Elige una fuente y continúa la conversación con contexto.</p>
+        <p class="mt-1 text-slate-600">Consulta productos y precios del inventario y continúa la conversación con contexto.</p>
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="flex flex-wrap gap-3 border-b border-slate-200 bg-white p-3">
-            <div>
-            <label class="block text-sm font-semibold text-slate-700" for="source">Fuente</label>
-            <select id="source" name="source" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-auto">
-                {% for value, label in source_choices %}
-                <option value="{{ value }}" {% if default_source == value %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-            </div>
             <div>
             <label class="block text-sm font-semibold text-slate-700" for="provider">Modelo IA</label>
             <select id="provider" name="provider" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-auto" {% if conversation %}disabled{% endif %}>
@@ -41,7 +33,7 @@
                 <div id="empty-state" class="flex min-h-[5rem] items-center justify-center text-center">
                     <div>
                         <h2 class="mt-2 font-semibold text-slate-900">¿Qué quieres saber?</h2>
-                        <p class="mt-1 text-sm text-slate-500">Selecciona una fuente y escribe tu consulta.</p>
+                        <p class="mt-1 text-sm text-slate-500">Escribe el producto que buscas.</p>
                     </div>
                 </div>
             {% endif %}
@@ -53,7 +45,7 @@
                 <input id="message" name="message" autocomplete="off" required class="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Escribe tu pregunta...">
                 <button id="send-button" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" type="submit">Enviar</button>
             </div>
-            <p id="status" class="mt-1 hidden text-xs text-slate-500">Consultando la fuente y preparando una respuesta...</p>
+            <p id="status" class="mt-1 hidden text-xs text-slate-500" role="status" aria-live="polite">Consultando el inventario y preparando una respuesta...</p>
         </form>
     </div>
 </section>
@@ -68,8 +60,17 @@
     const button = document.getElementById('send-button');
     const status = document.getElementById('status');
     const provider = document.getElementById('provider');
-    const source = document.getElementById('source');
     let conversation = '{{ conversation.id|default:"" }}';
+    let cooldownUntil = 0;
+    function showCooldown() {
+        const remaining = Math.ceil((cooldownUntil - Date.now()) / 1000);
+        button.disabled = remaining > 0;
+        status.classList.toggle('hidden', remaining <= 0);
+        if (remaining > 0) {
+            status.textContent = `Espera ${remaining} segundos antes de volver a enviar.`;
+            setTimeout(showCooldown, 1000);
+        }
+    }
 
     function addMessage(text, user) {
         const row = document.createElement('div');
@@ -84,16 +85,17 @@
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        if (button.disabled || Date.now() < cooldownUntil) return;
         const text = input.value.trim();
         if (!text) return;
         const data = new FormData(form);
         data.set('message', text);
         if (conversation) data.set('conversation', conversation);
         data.set('provider', provider.value);
-        data.set('source', source.value);
         addMessage(text, true);
         input.value = '';
         button.disabled = true;
+        status.textContent = 'Consultando el inventario y preparando una respuesta...';
         status.classList.remove('hidden');
         try {
             const response = await fetch('{% url "chat:send" %}', {method: 'POST', body: data, headers: {'X-Requested-With': 'XMLHttpRequest'}});
@@ -105,14 +107,19 @@
                 throw new Error('El servidor devolvió una respuesta no válida. Inténtalo nuevamente más tarde.');
             }
             const result = await response.json();
+            if (response.status === 429) {
+                const wait = Number(response.headers.get('Retry-After') || result.retry_after || 60);
+                cooldownUntil = Date.now() + (Number.isFinite(wait) ? Math.max(1, wait) : 60) * 1000;
+                if (!input.value) input.value = text;
+            }
             if (!response.ok) throw new Error(result.error || 'No se pudo enviar el mensaje.');
             conversation = result.conversation;
             addMessage(result.response, false);
         } catch (error) {
             addMessage(error.message, false);
         } finally {
-            button.disabled = false;
-            status.classList.add('hidden');
+            if (cooldownUntil > Date.now()) showCooldown();
+            else { button.disabled = false; status.classList.add('hidden'); }
             input.focus();
         }
     });

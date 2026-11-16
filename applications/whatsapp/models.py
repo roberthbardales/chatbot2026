@@ -1,4 +1,8 @@
+import uuid
+
 from django.db import models
+from django.utils import timezone
+from django.conf import settings
 
 
 class WhatsAppContact(models.Model):
@@ -12,6 +16,17 @@ class WhatsAppContact(models.Model):
     last_message_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class WorkerHeartbeat(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    started_at = models.DateTimeField(default=timezone.now)
+    heartbeat_at = models.DateTimeField()
+    last_progress_at = models.DateTimeField()
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    stopped_at = models.DateTimeField(null=True, blank=True)
+    phase = models.CharField(max_length=20, default='starting')
+    last_error = models.CharField(max_length=255, blank=True)
 
 
 class WhatsAppMessage(models.Model):
@@ -38,6 +53,11 @@ class WhatsAppMessage(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=RECEIVED)
     created_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processing_token = models.UUIDField(null=True, blank=True, db_index=True)
+    processing_attempts = models.PositiveIntegerField(default=0)
+    inventory_context = models.JSONField(default=dict, blank=True)
+    retry_after_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ('created_at', 'id')
@@ -53,6 +73,46 @@ class Outbox(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     locked_at = models.DateTimeField(null=True, blank=True)
+    lock_token = models.UUIDField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    group_id = models.UUIDField(default=uuid.uuid4, db_index=True)
+    part_number = models.PositiveIntegerField(default=1)
+    meta_message_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    delivery_status = models.CharField(max_length=16, blank=True)
+    provider_sent_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    delivery_failed_at = models.DateTimeField(null=True, blank=True)
+    delivery_error = models.CharField(max_length=1000, blank=True)
+    manual_retries = models.PositiveIntegerField(default=0)
+    last_retry_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ('created_at', 'id')
+        constraints = [
+            models.UniqueConstraint(fields=('group_id', 'part_number'), name='outbox_unique_group_part'),
+        ]
+
+
+class DeliveryEvent(models.Model):
+    fingerprint = models.CharField(max_length=64, unique=True)
+    meta_message_id = models.CharField(max_length=255, db_index=True)
+    recipient_id = models.CharField(max_length=32)
+    phone_number_id = models.CharField(max_length=64)
+    status = models.CharField(max_length=16)
+    occurred_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    error = models.CharField(max_length=1000, blank=True)
+    outbox = models.ForeignKey(Outbox, on_delete=models.CASCADE, null=True, blank=True, related_name='delivery_events')
+    applied_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+
+class OutboxRetryAudit(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    actor_identifier = models.CharField(max_length=64)
+    outbox = models.ForeignKey(Outbox, null=True, on_delete=models.SET_NULL, related_name='retry_audits')
+    group_id = models.UUIDField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reason = models.CharField(max_length=500)
+    snapshot = models.JSONField(default=list)

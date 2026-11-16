@@ -1,0 +1,11 @@
+[Unit]
+Description=Read-only WhatsApp worker health check
+After=chatbot-whatsapp-worker.service
+
+[Service]
+Type=oneshot
+User=chatbot
+WorkingDirectory=/opt/chatbot2026
+ExecStart=/opt/chatbot2026/venv/bin/python manage.py whatsapp_healthcheck
+NoNewPrivileges=true
+PrivateTmp=true
