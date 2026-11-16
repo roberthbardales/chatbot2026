@@ -52,7 +52,6 @@ class InventorySyncRun(models.Model):
     started_at = models.DateTimeField(default=timezone.now)
     finished_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=16, default='running')
-    fingerprint = models.CharField(max_length=64, blank=True)
     summary = models.JSONField(default=dict)
     error = models.CharField(max_length=1000, blank=True)
 

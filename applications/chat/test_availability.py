@@ -80,7 +80,7 @@ class AvailabilitySyncTests(TestCase):
     def sync(self):
         with patch('applications.chat.inventory_sync._download_rows', return_value=self.ROWS):
             plan = preview_inventory()
-            apply_inventory(confirm=plan.fingerprint)
+            apply_inventory()
 
     def test_sync_persists_availability_and_search_exposes_it(self):
         self.sync()

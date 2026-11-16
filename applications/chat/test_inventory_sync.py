@@ -31,7 +31,7 @@ class InventorySyncTests(TestCase):
         return self.rows
 
     def apply(self, **kwargs):
-        return sync_inventory(confirm=preview_inventory().fingerprint, **kwargs)
+        return sync_inventory(**kwargs)
 
     def test_preview_has_values_and_no_catalog_or_history_writes(self):
         plan = preview_inventory()
@@ -70,38 +70,48 @@ class InventorySyncTests(TestCase):
         self.apply()
         self.product.refresh_from_db()
         stamp = self.product.updated_at
-        plan = preview_inventory()
-        self.assertEqual(plan.summary['products']['unchanged'], 1)
-        sync_inventory(confirm=plan.fingerprint)
+        self.assertEqual(preview_inventory().summary['products']['unchanged'], 1)
+        sync_inventory()
         self.product.refresh_from_db()
         self.assertEqual(self.product.updated_at, stamp)
 
-    def test_default_command_is_preview_and_requires_explicit_confirmation_to_apply(self):
+    def test_command_applies_by_default_and_dry_run_only_previews(self):
         output = io.StringIO()
-        call_command('sync_inventory', json=True, stdout=output)
+        call_command('sync_inventory', dry_run=True, json=True, stdout=output)
         data = json.loads(output.getvalue())
         self.assertEqual(data['status'], 'preview')
+        self.assertNotIn('fingerprint', data)
         self.assertFalse(InventorySyncRun.objects.exists())
-        with self.assertRaises(CommandError):
-            call_command('sync_inventory', apply=True, stdout=io.StringIO())
-        self.assertFalse(InventorySyncRun.objects.exists())
-        call_command('sync_inventory', apply=True, confirm=data['fingerprint'], stdout=io.StringIO())
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 8)
+        output = io.StringIO()
+        call_command('sync_inventory', stdout=output)
+        self.assertIn('APLICADO', output.getvalue())
+        self.assertIn('Catálogo: 1 productos (1 activos).', output.getvalue())
+        self.assertNotIn('Huella', output.getvalue())
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 9)
         self.assertEqual(InventorySyncRun.objects.get().status, 'applied')
 
-    def test_changed_sheet_or_database_invalidates_preview(self):
-        plan = preview_inventory()
-        self.rows[0]['precio'] = '28.00'
-        with self.assertRaises(InventoryError):
-            sync_inventory(confirm=plan.fingerprint)
+    def test_removed_flags_are_rejected(self):
+        for flag in ('--apply', '--confirm=abc', '--yes'):
+            with self.subTest(flag=flag):
+                with self.assertRaises(CommandError):
+                    call_command('sync_inventory', flag, stdout=io.StringIO())
+        self.assertFalse(InventorySyncRun.objects.exists())
         self.product.refresh_from_db()
-        self.assertEqual(self.product.price, Decimal('25'))
-        self.assertEqual(InventorySyncRun.objects.get().status, 'failed')
-        plan = preview_inventory()
-        Product.objects.filter(pk=self.product.pk).update(stock=99)
-        with self.assertRaises(InventoryError):
-            sync_inventory(confirm=plan.fingerprint)
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 99)
+        self.assertEqual(self.product.stock, 8)
+
+    def test_command_still_blocks_mass_deactivation_without_allow_large_drop(self):
+        for index in range(12):
+            Product.objects.create(sku=f'X-{index}', name=f'Extra {index}')
+        with self.assertRaises(CommandError):
+            call_command('sync_inventory', stdout=io.StringIO())
+        self.assertEqual(Product.objects.filter(active=True).count(), 13)
+        with self.assertRaises(CommandError):
+            call_command('sync_inventory', dry_run=True, allow_large_drop=True, stdout=io.StringIO())
+        call_command('sync_inventory', allow_large_drop=True, stdout=io.StringIO())
+        self.assertEqual(Product.objects.filter(active=True).count(), 1)
 
     def test_duplicates_after_unicode_and_case_normalization_are_rejected(self):
         self.rows.append({'sku': 'ＶＡＬ-01', 'nombre': 'Duplicado'})
@@ -123,20 +133,13 @@ class InventorySyncTests(TestCase):
         self.assertEqual(self.product.sku, 'VAL-01')
         self.assertEqual(product_by_sku('ＶＡＬ-01')['sku'], 'VAL-01')
 
-    def test_sheet_row_order_does_not_invalidate_the_same_logical_plan(self):
-        self.rows.append({'sku': 'NEW', 'nombre': 'Nuevo'})
-        first = preview_inventory().fingerprint
-        self.rows.reverse()
-        self.assertEqual(preview_inventory().fingerprint, first)
-
     def test_large_deactivation_requires_additional_explicit_acknowledgement(self):
         Product.objects.bulk_create([Product(sku=f'OLD-{i}', name=f'Antiguo {i}') for i in range(9)])
-        plan = preview_inventory()
-        self.assertTrue(plan.summary['requires_allow_large_drop'])
+        self.assertTrue(preview_inventory().summary['requires_allow_large_drop'])
         with self.assertRaises(InventoryError):
-            sync_inventory(confirm=plan.fingerprint)
+            sync_inventory()
         self.assertEqual(Product.objects.filter(active=True).count(), 10)
-        sync_inventory(confirm=plan.fingerprint, allow_large_drop=True)
+        sync_inventory(allow_large_drop=True)
         self.assertEqual(Product.objects.count(), 10)
         self.assertEqual(Product.objects.filter(active=True).count(), 1)
 
@@ -151,7 +154,6 @@ class InventorySyncTests(TestCase):
         self.assertFalse(InventorySyncRun.objects.exists())
 
     def test_catalog_changes_roll_back_if_apply_fails_midway(self):
-        plan = preview_inventory()
         original = Product.save
 
         def fail_after_save(instance, *args, **kwargs):
@@ -160,7 +162,7 @@ class InventorySyncTests(TestCase):
 
         with patch('applications.chat.inventory_sync.Product.save', new=fail_after_save):
             with self.assertRaises(InventoryError):
-                sync_inventory(confirm=plan.fingerprint)
+                sync_inventory()
         self.product.refresh_from_db()
         self.assertEqual(self.product.price, Decimal('25.00'))
         self.assertEqual(InventorySyncRun.objects.get().status, 'failed')
@@ -188,20 +190,17 @@ class InventorySyncTests(TestCase):
         self.assertEqual(agotado.stock, 0)
         self.assertEqual(agotado.description, '')
 
-    def test_status_command_is_local_read_only(self):
-        output = io.StringIO()
-        call_command('inventory_status', stdout=output)
-        self.assertEqual(json.loads(output.getvalue())['freshness'], 'unknown')
+    def test_status_is_local_read_only(self):
+        self.assertEqual(inventory_status()['freshness'], 'unknown')
         self.download.assert_not_called()
         self.assertFalse(InventorySyncRun.objects.exists())
 
     def test_failed_attempt_does_not_erase_last_success_or_freshness(self):
         run = self.apply()
         success_at = inventory_status()['last_success_at']
-        fingerprint = preview_inventory().fingerprint
         self.rows[0]['precio'] = 'invalid'
         with self.assertRaises(InventoryError):
-            sync_inventory(confirm=fingerprint)
+            sync_inventory()
         state = inventory_status()
         self.assertEqual(state['last_success_at'], success_at)
         self.assertEqual(state['last_attempt']['status'], 'failed')
@@ -220,10 +219,9 @@ class InventorySyncTests(TestCase):
             'applications.chat.inventory_sync.InventorySyncRun.objects.create', side_effect=low_resolution_create,
         ):
             successful = self.apply()
-            fingerprint = preview_inventory().fingerprint
             self.rows[0]['precio'] = 'invalid'
             with self.assertRaises(InventoryError):
-                sync_inventory(confirm=fingerprint)
+                sync_inventory()
         failed = InventorySyncRun.objects.get(status='failed')
         self.assertGreater(failed.started_at, successful.started_at)
         self.assertGreaterEqual(failed.finished_at, failed.started_at)
@@ -271,27 +269,23 @@ class InventoryCSVValidationTests(TestCase):
 
 @override_settings(GOOGLE_SHEET_PRODUCTS_CSV_URL='products')
 class ConcurrentInventorySyncTests(TransactionTestCase):
-    def test_parallel_applies_revalidate_the_locked_catalog(self):
+    def test_parallel_applies_are_serialized_and_apply_the_change_once(self):
         Product.objects.create(sku='A', name='Before', price='1.00')
         rows = [{'sku': 'A', 'name': 'After', 'price': '2.00'}]
         barrier = Barrier(2)
         with patch('applications.chat.inventory_sync._download_rows', return_value=rows):
-            plan = preview_inventory()
 
             def apply():
                 close_old_connections()
                 try:
                     barrier.wait(timeout=10)
-                    try:
-                        sync_inventory(confirm=plan.fingerprint)
-                        return True
-                    except InventoryError:
-                        return False
+                    return len(sync_inventory().summary['products']['update'])
                 finally:
                     close_old_connections()
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(lambda _: apply(), range(2)))
-        self.assertEqual(sorted(results), [False, True])
+        # El bloqueo del catálogo serializa las aplicaciones: solo una encuentra el cambio pendiente.
+        self.assertEqual(sorted(results), [0, 1])
         self.assertEqual(Product.objects.get().price, Decimal('2.00'))
-        self.assertEqual(InventorySyncRun.objects.filter(status='applied').count(), 1)
+        self.assertEqual(InventorySyncRun.objects.filter(status='applied').count(), 2)

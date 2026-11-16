@@ -60,14 +60,15 @@ python manage.py migrate
 python manage.py sync_inventory
 ```
 
-`sync_inventory` muestra una vista previa sin modificar el catálogo. Revisa altas,
-cambios y bajas, y aplica con `python manage.py sync_inventory --apply --confirm
-HUELLA` usando la huella impresa. Si detecta bajas masivas también exige
-`--allow-large-drop`. Después inicia el servidor con `python manage.py runserver`.
+`sync_inventory` descarga la hoja, la valida y carga los productos y su stock en la
+base de datos en un solo paso. Con `--dry-run` solo muestra altas, cambios y bajas sin
+modificar nada. Si detecta bajas masivas se detiene y exige `--allow-large-drop`.
+Después inicia el servidor con `python manage.py runserver`.
 Los productos se actualizan por SKU; los ausentes se desactivan, sin borrar sus
 IDs. La hoja puede ser el Excel subido tal cual (columnas `Producto`, `Marca`,
-`Tipo`, `Precio`, `Precio anterior`, `Disponible`, `URL`, `ID producto`).
-Consulta `docs/inventory-sync.md` para validación y confirmación segura.
+`Tipo`, `Precio`, `Precio anterior`, `Stock`, `URL`, `ID producto`; `Disponible` es opcional).
+La URL de `GOOGLE_SHEET_PRODUCTS_CSV_URL` debe devolver CSV directo (en Google Sheets,
+`.../d/<ID>/export?format=csv`). Consulta `docs/inventory-sync.md` para validación y bajas masivas.
 
 Para WhatsApp, configura en Meta Developers una Callback URL pública HTTPS que
 termine en `/whatsapp/webhook/`. El servidor valida y guarda cada mensaje;
@@ -94,9 +95,9 @@ python manage.py whatsapp_worker
 
 **Advertencia:** `whatsapp_worker` y `whatsapp_worker --once` procesan y envían
 mensajes reales; no son simulaciones. El worker ya no sincroniza inventario.
-`sync_inventory` se revisa y aplica por separado, con confirmación explícita y
-sin borrar filas. No ejecutes el worker ni apliques sincronizaciones como
-diagnóstico de solo lectura. Para comprobar el worker sin enviar mensajes,
+`sync_inventory` se ejecuta por separado y escribe en el catálogo (sin borrar
+filas; usa `--dry-run` para solo mirar). No ejecutes el worker ni sincronices
+como diagnóstico de solo lectura. Para comprobar el worker sin enviar mensajes,
 usa `python manage.py whatsapp_healthcheck`.
 
 El dashboard operativo está disponible en `/whatsapp/` para superusuarios,

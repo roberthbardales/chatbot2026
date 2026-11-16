@@ -164,7 +164,7 @@ Cliente
 - `whatsapp_worker --once` no es una simulación: intenta sincronizar el inventario y procesa y envía mensajes reales. En ejecución continua consulta las colas cada dos segundos y sincroniza cada `INVENTORY_SYNC_MINUTES`.
 - La sincronización actualiza los productos por SKU en una transacción y desactiva los ausentes sin borrarlos; los identificadores se conservan.
 - El reconocimiento de imágenes de WhatsApp requiere un modelo multimodal en OpenRouter. Identificar visualmente un producto no implica que esté disponible: las respuestas se limitan a coincidencias reales del catálogo.
-- El blog, DummyJSON y el código vectorial se eliminaron: la única fuente es la hoja de Google. Las migraciones se reiniciaron (`chat`: `0001_initial`, `0002_initial`, `0003_product_available`) y ya no hay tablas heredadas (`ProductDocument`, `Combo`); PostgreSQL ya no necesita pgvector (en bases existentes la extensión puede quedar instalada sin efecto).
+- El blog, DummyJSON y el código vectorial se eliminaron: la única fuente es la hoja de Google. Las migraciones se reiniciaron (`chat`: `0001_initial`, `0002_initial`) y ya no hay tablas heredadas (`ProductDocument`, `Combo`); PostgreSQL ya no necesita pgvector (en bases existentes la extensión puede quedar instalada sin efecto).
 
 ## Buenas prácticas consideradas
 

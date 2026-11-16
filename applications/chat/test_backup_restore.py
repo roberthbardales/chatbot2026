@@ -56,7 +56,7 @@ class PostgreSQLBackupRestoreTests(TransactionTestCase):
         session = Session.objects.create(session_key=uuid.uuid4().hex,
                                           session_data=SessionStore().encode({'fixture': str(conversation.pk)}),
                                           expire_date=now + timedelta(days=1))
-        run = InventorySyncRun.objects.create(status='applied', finished_at=now, fingerprint='a' * 64, summary={'price': '0.10'})
+        run = InventorySyncRun.objects.create(status='applied', finished_at=now, summary={'price': '0.10'})
         InventorySyncLock.objects.create(pk=1)
         AIUsageDay.objects.create(day=now.date(), requests=3, reserved_tokens=1234)
         UsageBucket.objects.create(key='rate:restore-fixture', window_started_at=now, count=2)

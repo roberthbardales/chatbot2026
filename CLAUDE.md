@@ -9,11 +9,11 @@ Documentación adicional en español: `README.md`, `arquitectura.md` (flujos) y 
 - Ejecuta los comandos desde la raíz. En Windows/PowerShell no hace falta activar el entorno: usa `.\venv\Scripts\python.exe` (abajo, `python`).
 - `.env` raíz es obligatorio: `SECRET_KEY`, `DB_NAME`, `DB_USER` y `DB_PASSWORD` son necesarios incluso para comandos de administración. No hay configuración alternativa con SQLite ni ajustes específicos para pruebas.
 - Para desarrollo local por HTTP hacen falta `DEBUG=True` y `ALLOWED_HOSTS` adecuados: el valor predeterminado `DEBUG=False` fuerza HTTPS y cookies seguras.
-- Solo PostgreSQL. pgvector ya no es necesario (las migraciones se reiniciaron: `chat` tiene `0001_initial`, `0002_initial` y `0003_product_available`, y el modelo ya no incluye tablas heredadas); las pruebas solo necesitan poder crear su base de datos.
+- Solo PostgreSQL. pgvector ya no es necesario (las migraciones se reiniciaron: `chat` tiene `0001_initial` y `0002_initial`, y el modelo ya no incluye tablas heredadas); las pruebas solo necesitan poder crear su base de datos.
 - `.envotro` (si existe) solo aporta valores predeterminados de IA/inventario de una lista permitida (`_OTHER_ENV_KEYS` en settings): no admite todas las claves, no importa credenciales de base de datos ni del framework, y las variables del entorno/`.env` tienen prioridad.
 - `GOOGLE_SHEET_PRODUCTS_CSV_URL` debe devolver CSV directo: para Google Sheets usa `https://docs.google.com/spreadsheets/d/<ID>/export?format=csv` (hoja compartida con enlace). Los enlaces `/edit?usp=sharing` o `drive.google.com/file/.../view` devuelven HTML y `sync_inventory` falla con «Cabeceras CSV ausentes, duplicadas o incompletas».
 - Si tras actualizar el código `sync_inventory` falla con «no existe la columna …» (p. ej. `chat_product.available`), faltan migraciones: revisa con `python manage.py showmigrations` y aplica `python manage.py migrate`.
-- Instalación nueva: `python manage.py migrate`; revisar `python manage.py sync_inventory` (vista previa desde `GOOGLE_SHEET_PRODUCTS_CSV_URL`) y aplicar solo con `--apply --confirm HUELLA`; después `python manage.py runserver`.
+- Instalación nueva: `python manage.py migrate`; `python manage.py sync_inventory` descarga `GOOGLE_SHEET_PRODUCTS_CSV_URL` y carga el catálogo (usa `--dry-run` para solo ver la vista previa); después `python manage.py runserver`.
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -33,11 +33,11 @@ python manage.py test applications.chat.tests.ChatFlowTests.test_anonymous_user_
 
 ## Operaciones sensibles (no ejecutar como diagnóstico)
 
-- `sync_inventory` sin flags es vista previa sin escrituras. `--apply --confirm HUELLA` vuelve a descargar, valida el catálogo bloqueado y aplica en una transacción; un cambio de CSV/catálogo invalida la confirmación; las bajas masivas necesitan además `--allow-large-drop`. No descargues ni apliques el catálogo real por rutina: usa mocks e `inventory_status`.
+- `sync_inventory` sin flags **escribe**: descarga, valida el catálogo bloqueado y aplica en una transacción (sin huella ni confirmación previa); `--dry-run` es la vista previa sin escrituras; las bajas masivas necesitan además `--allow-large-drop`. No descargues ni apliques el catálogo real por rutina: usa mocks y las funciones `preview_inventory()`/`inventory_status()` en pruebas.
 - `whatsapp_worker --once` **no** es una simulación: procesa mensajes pendientes y **envía WhatsApps reales**.
 - `cleanup_chat_limits` elimina registros caducados de límites de uso.
 - `cleanup_whatsapp_data` elimina latidos de workers y eventos de entrega antiguos (`--dry-run` solo cuenta; no toca mensajes ni `Outbox`).
-- Solo lectura: `inventory_status`, `whatsapp_healthcheck` (devuelve salida no exitosa si falta latido/progreso o hay errores), `whatsapp_operations_check`, `ai_usage` (cupo local de IA del día UTC; son reservas conservadoras, no facturación real).
+- Solo lectura: `sync_inventory --dry-run`, `whatsapp_healthcheck` (devuelve salida no exitosa si falta latido/progreso o hay errores), `whatsapp_operations_check`, `ai_usage` (cupo local de IA del día UTC; son reservas conservadoras, no facturación real).
 
 ## Arquitectura
 

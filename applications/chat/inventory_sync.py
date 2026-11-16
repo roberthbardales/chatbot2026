@@ -1,7 +1,6 @@
-"""Previewed, confirmed catalog updates without deleting stable identities."""
+"""Vista previa y aplicación del catálogo sin borrar identidades estables."""
 import hashlib
 import json
-import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import timedelta
@@ -67,10 +66,6 @@ def _load_sources():
     return parsed_products
 
 
-def _snapshot(items, fields):
-    return [{'id': item.pk, **{field: getattr(item, field) for field in fields}} for item in sorted(items, key=lambda item: item.pk)]
-
-
 def _diff(rows, existing, field, key, fields):
     old = _index(existing, field, key)
     incoming = _index(rows, field, key)
@@ -99,7 +94,6 @@ def _diff(rows, existing, field, key, fields):
 class InventoryPlan:
     products: list
     summary: dict
-    fingerprint: str
 
 
 def _build_plan(product_rows, products):
@@ -118,13 +112,9 @@ def _build_plan(product_rows, products):
         warnings.append(f'Baja masiva de productos: {removed_products}/{before} activos quedarían inactivos.')
     summary = {'products': product_summary, 'warnings': warnings,
                'requires_allow_large_drop': bool(warnings)}
-    fingerprint = _digest({'sources': [settings.GOOGLE_SHEET_PRODUCTS_CSV_URL],
-                           'source_products': canonical,
-                           'current_products': _snapshot(products, PRODUCT_FIELDS),
-                           'guards': [settings.INVENTORY_MIN_CATALOG_FOR_DROP_GUARD, settings.INVENTORY_MAX_DEACTIVATE_PERCENT]})
     # Freeze Decimal values as exact JSON strings for display and audit, not floats.
     summary = json.loads(_json(summary))
-    return InventoryPlan(canonical, summary, fingerprint)
+    return InventoryPlan(canonical, summary)
 
 
 def preview_inventory():
@@ -153,9 +143,7 @@ def _upsert(model, rows, existing, field, key, fields):
             item.save(update_fields=('active', 'content_hash', 'updated_at'))
 
 
-def apply_inventory(*, confirm=None, allow_large_drop=False):
-    if not isinstance(confirm, str) or re.fullmatch(r'[a-f0-9]{64}', confirm) is None:
-        raise InventoryError('Primero ejecuta la vista previa y confirma su huella con --apply --confirm HUELLA.')
+def apply_inventory(*, allow_large_drop=False):
     # Windows/PostgreSQL clocks may give consecutive attempts the same timestamp.
     # Allocate a monotonic audit timestamp under the same shared catalog lock;
     # UUID ordering must never decide which attempt is reported as the latest.
@@ -166,7 +154,7 @@ def apply_inventory(*, confirm=None, allow_large_drop=False):
         started_at = timezone.now()
         if previous and started_at <= previous.started_at:
             started_at = previous.started_at + timedelta(microseconds=1)
-        run = InventorySyncRun.objects.create(fingerprint=confirm, started_at=started_at)
+        run = InventorySyncRun.objects.create(started_at=started_at)
     try:
         rows = _load_sources()
         with transaction.atomic():
@@ -174,8 +162,6 @@ def apply_inventory(*, confirm=None, allow_large_drop=False):
             InventorySyncLock.objects.select_for_update().get(pk=1)
             products = list(Product.objects.select_for_update().order_by('pk'))
             plan = _build_plan(rows, products)
-            if plan.fingerprint != confirm:
-                raise InventoryError('Cambió el CSV, el catálogo o la configuración desde la vista previa. Repite la revisión.')
             if plan.summary['requires_allow_large_drop'] and allow_large_drop is not True:
                 raise InventoryError('Baja masiva bloqueada. Revisa la vista previa; requiere además --allow-large-drop.')
             _upsert(Product, plan.products, products, 'sku', _key, PRODUCT_FIELDS)

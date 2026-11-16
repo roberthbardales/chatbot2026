@@ -12,7 +12,7 @@ La regla que lo gobierna: **la IA nunca escribe precios ni stock**. Los producto
 
 ```text
  Google Sheets (CSV)
-        │   sync_inventory  (manual: vista previa → --apply --confirm HUELLA)
+        │   sync_inventory  (manual)
         ▼
   Tabla Product (PostgreSQL)  ◄───────────────────────────────┐
         ▲                                                      │
@@ -34,8 +34,8 @@ El chat **no lee el CSV de Google en cada pregunta**. El catálogo se copia a la
 
 La hoja se lee desde `GOOGLE_SHEET_PRODUCTS_CSV_URL`, que debe devolver CSV directo; para Google Sheets usa `https://docs.google.com/spreadsheets/d/<ID>/export?format=csv` (el enlace `/edit?usp=sharing` devuelve HTML y la sincronización falla con «Cabeceras CSV ausentes…»). Columnas reconocidas: `ID producto`/`SKU`, `Producto`, `Marca`, `Tipo`, `Precio`, `Stock`, `Disponible`, `Precio anterior` y `URL`; las demás se ignoran. Si hay `Stock`, la cantidad manda sobre `Disponible`. Antes de sincronizar, la base debe tener las migraciones al día (`python manage.py migrate`).
 
-1. `python manage.py sync_inventory` descarga la hoja, la valida y muestra una **vista previa** (productos nuevos, cambiados, desactivados) con una **huella**. No escribe nada.
-2. `python manage.py sync_inventory --apply --confirm HUELLA` vuelve a descargar, comprueba que la huella no cambió y aplica todo en una transacción.
+1. `python manage.py sync_inventory` descarga la hoja, la valida y aplica todo en una transacción, en un solo paso.
+2. `python manage.py sync_inventory --dry-run` (opcional) hace lo mismo pero solo muestra la **vista previa** (productos nuevos, cambiados, desactivados) sin escribir nada.
 
 Reglas que protegen el catálogo:
 
@@ -44,7 +44,7 @@ Reglas que protegen el catálogo:
 - Los productos que desaparecen de la hoja se **desactivan**, no se borran.
 - Si desaparecen demasiados a la vez (25 % por defecto), la baja masiva se bloquea salvo `--allow-large-drop`.
 
-Consecuencia práctica: **si cambias un precio en la hoja y no sincronizas, el chat responde con el precio anterior**. `python manage.py inventory_status` (solo lectura) indica cuántos productos hay y si el catálogo está desactualizado.
+Consecuencia práctica: **si cambias un precio en la hoja y no sincronizas, el chat responde con el precio anterior**. Al terminar, `sync_inventory` indica cuántos productos hay en el catálogo.
 
 ## 4. Flujo A: chat web
 
@@ -203,7 +203,6 @@ python manage.py whatsapp_worker           # worker (ENVÍA WhatsApps reales)
 Comprobaciones de solo lectura:
 
 ```powershell
-python manage.py inventory_status          # catálogo: cantidad y frescura
 python manage.py whatsapp_healthcheck      # worker vivo y progresando
 python manage.py whatsapp_operations_check # colas, fallos y alertas
 python manage.py ai_usage                  # consumo local de IA del día

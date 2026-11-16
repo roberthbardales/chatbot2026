@@ -14,7 +14,7 @@ Principio rector: **la IA nunca inventa datos comerciales**. Los productos se bu
 ```text
                     ┌────────────────────────── Google Sheets (CSV) ──────────────────────────┐
                     │                                                                          │
-                    ▼  sync_inventory (manual, vista previa → --apply --confirm HUELLA)        │
+                    ▼  sync_inventory (manual)                                     │
 Navegador ──► /chat/send/ ──┐                                                                  │
                             ├─► answer_sheet_message ──► Product (PostgreSQL, búsqueda textual)│
 WhatsApp ─► webhook ─► cola ┘            │                                                     │
@@ -56,7 +56,7 @@ WhatsApp ─► webhook ─► cola ┘            │                          
 | `services.py` | `answer_message` → `answer_sheet_message`: orquesta SKU explícito, elección de candidatos previos, categoría, búsqueda, imagen y selección por IA. |
 | `inventory.py` | Búsqueda textual sobre `Product` activos: normalización, sinónimos, dimensiones (fracciones, mm, pulgadas), puntaje por inclusión de términos. |
 | `inventory_source.py` | Descarga y valida el CSV (alias de cabeceras, `Decimal`, límites de tamaño/filas). |
-| `inventory_sync.py` | Vista previa y aplicación con huella, bloqueo y auditoría (`InventorySyncRun`). |
+| `inventory_sync.py` | Vista previa y aplicación con bloqueo y auditoría (`InventorySyncRun`). |
 | `responses.py` | `InventoryAnswer` (texto + `inventory_context`), validación estricta del JSON de la IA y redacción con valores del inventario. |
 | `providers.py` | Cliente OpenRouter (`urllib`), siempre dentro de `ai_admission`. |
 | `limits.py` | Frecuencia, concurrencia y cupo diario de IA, todo en PostgreSQL. |
@@ -122,14 +122,14 @@ El worker (`whatsapp_worker`) ejecuta en bucle cada `WHATSAPP_WORKER_POLL_SECOND
 ### 4.5 Sincronización de inventario
 
 ```text
-Google Sheet (CSV) ─► inventory_source (validar) ─► InventoryPlan (huella SHA-256)
-sync_inventory               → vista previa, sin escrituras
-sync_inventory --apply --confirm HUELLA [--allow-large-drop]
+Google Sheet (CSV) ─► inventory_source (validar) ─► InventoryPlan
+sync_inventory --dry-run     → vista previa, sin escrituras
+sync_inventory [--allow-large-drop]
 ```
 
-- Aplicar vuelve a descargar y recalcula la huella; si cambió el CSV o el catálogo, aborta.
+- Aplicar vuelve a descargar y validar el CSV y calcula el plan sobre el catálogo bloqueado.
 - Todo ocurre en una transacción con `InventorySyncLock`. Conserva IDs por SKU, **desactiva** ausentes (no borra) y bloquea bajas mayores a `INVENTORY_MAX_DEACTIVATE_PERCENT` sin `--allow-large-drop`.
-- `inventory_status` informa frescura (`current`/`stale`/`unknown`) frente a `INVENTORY_STALE_HOURS`. El worker **no** sincroniza.
+- El estado (`current`/`stale`/`unknown`, frente a `INVENTORY_STALE_HOURS`) sale en el panel de WhatsApp y al final de `sync_inventory`. El worker **no** sincroniza.
 
 ## 5. Límites y control de consumo
 
@@ -156,8 +156,8 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 
 - **Procesos**: servidor web (WSGI) + `whatsapp_worker` obligatorio para responder. Plantillas en `deploy/systemd/` (servicio del worker y temporizador de salud) y `deploy/windows/` (tareas programadas).
 - **Salud**: el latido se actualiza en un hilo propio; el progreso, en el bucle principal, de modo que un bucle colgado se distingue de un proceso muerto. `whatsapp_healthcheck` falla si no hay latido/progreso o hay errores.
-- **Comandos de solo lectura**: `inventory_status`, `whatsapp_healthcheck`, `whatsapp_operations_check`, `ai_usage`.
-- **Comandos sensibles**: `whatsapp_worker --once` (envía mensajes reales), `sync_inventory --apply`, `cleanup_chat_limits` (borra registros caducados).
+- **Comandos de solo lectura**: `whatsapp_healthcheck`, `whatsapp_operations_check`, `ai_usage`.
+- **Comandos sensibles**: `whatsapp_worker --once` (envía mensajes reales), `sync_inventory`, `cleanup_chat_limits` (borra registros caducados).
 - **Respaldo**: `deploy/predeploy_backup.py` y ensayo en `test_backup_restore`; ver [recovery-validation.md](recovery-validation.md).
 
 ## 8. Pruebas

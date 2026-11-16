@@ -1,41 +1,31 @@
 # Actualización segura del inventario
 
-## Cambio importante del comando
+## El comando
 
-`sync_inventory` **ya no elimina y recrea el catálogo ni aplica cambios por defecto**.
-Sin argumentos descarga los CSV, valida y muestra una vista previa sin escribir
-productos, bloqueos ni historial. No se ejecutó contra los CSV reales
-durante esta implementación.
-
-Desde la raíz, con el intérprete del proyecto:
+Hay un único comando de catálogo. Desde la raíz, con el intérprete del proyecto:
 
 ```powershell
 .\venv\Scripts\python.exe manage.py sync_inventory
 ```
 
-Para revisar todos los valores anteriores/nuevos, sin el truncamiento de la
-salida humana resumida:
+**Sí modifica el catálogo.** Descarga la hoja, la valida, bloquea el estado de
+sincronización y las filas actuales y aplica los cambios en una transacción: o se
+aplica todo o nada. No borra filas (los ausentes se desactivan) y no necesita
+confirmación; la protección contra bajas masivas (más abajo) sigue activa. Al
+terminar muestra cuántos productos hay en el catálogo.
+
+Si solo quieres ver qué cambiaría, sin escribir productos, bloqueos ni historial:
 
 ```powershell
-.\venv\Scripts\python.exe manage.py sync_inventory --json
+.\venv\Scripts\python.exe manage.py sync_inventory --dry-run
 ```
+
+Para revisar todos los valores anteriores/nuevos, sin el truncamiento de la
+salida resumida, añade `--json` (con o sin `--dry-run`).
 
 El resultado indica altas, campos que cambian, productos ausentes que se
-desactivarían, cambios explícitos de activo a inactivo, filas sin cambios y una
-huella de revisión. Solo después de revisarlo, aplica con esa huella:
-
-```powershell
-.\venv\Scripts\python.exe manage.py sync_inventory --apply --confirm HUELLA
-```
-
-Este último comando **sí modifica el catálogo**. Vuelve a descargar y validar,
-bloquea el estado de sincronización y las filas actuales y recalcula la huella.
-Si cambian el CSV, los datos locales o la configuración de protección desde la
-vista previa, rechaza la aplicación y exige revisar otra vez. La huella incluye
-las fuentes mediante hash; no se imprimen sus URLs ni credenciales.
-
-La huella es una confirmación de datos revisados, no un mecanismo de autorización
-ni un secreto. El comando requiere acceso al entorno y a PostgreSQL. No existe
+desactivarían, cambios explícitos de activo a inactivo y filas sin cambios. El
+comando requiere acceso al entorno y a PostgreSQL. No existe
 un endpoint público para aplicar el catálogo y no se agregó un botón de
 sincronización automática al panel.
 
@@ -50,8 +40,8 @@ sincronización automática al panel.
 - Los ausentes quedan `active=False`; si regresan con el mismo SKU recuperan
   el mismo ID. Cambiar realmente el SKU implica alta del nuevo y baja lógica del
   anterior; no se adivina que son el mismo artículo.
-- No se tocan `updated_at` ni otros datos de filas sin cambios. Las huellas de
-  contenido antiguas pueden actualizarse la primera vez.
+- No se tocan `updated_at` ni otros datos de filas sin cambios. Los hashes de
+  contenido antiguos pueden actualizarse la primera vez.
 
 Esto conserva IDs a partir de ahora; no recupera identificadores perdidos por
 sincronizaciones antiguas que borraron/recrearon filas.
@@ -63,10 +53,11 @@ tanto por ausencia como por `activo=0`.
 Los artículos nuevos no ocultan una retirada masiva de los anteriores.
 
 Por defecto, un catálogo con al menos 10 activos que perdería el 25 % o más se
-marca como baja masiva. No basta con proporcionar la huella; exige también:
+marca como baja masiva y el comando se detiene. Para aceptarla, ejecútalo con
+`--allow-large-drop`:
 
 ```powershell
-.\venv\Scripts\python.exe manage.py sync_inventory --apply --confirm HUELLA --allow-large-drop
+.\venv\Scripts\python.exe manage.py sync_inventory --allow-large-drop
 ```
 
 No uses esa opción para eludir un CSV incompleto sin investigarlo. Nunca permite
@@ -117,8 +108,8 @@ forman parte de este cambio.
 
 ## Historial, vigencia y diagnóstico local
 
-Los intentos de aplicación con huella válida se registran en `InventorySyncRun`:
-inicio, fin, estado `running`/`applied`/`failed`, huella, resumen y error. Los
+Los intentos de aplicación se registran en `InventorySyncRun`:
+inicio, fin, estado `running`/`applied`/`failed`, resumen y error. Los
 cambios del catálogo y el registro aplicado se confirman en una transacción.
 Si falla una escritura, no se guardan cambios parciales y se registra el fallo
 fuera de esa transacción. Dos aplicaciones simultáneas coordinadas por el
@@ -129,11 +120,8 @@ aplicación correcta. Tras una interrupción brusca puede quedar un intento
 `running`; no se considera éxito y debe revisarse. No se borra automáticamente
 el historial ni se restauran instantáneas anteriores.
 
-Consulta de solo lectura, **sin descargar CSV**:
-
-```powershell
-.\venv\Scripts\python.exe manage.py inventory_status
-```
+El estado (activos/totales, última aplicación y vigencia) se imprime al final de
+cada ejecución de `sync_inventory` y se calcula sin descargar CSV.
 
 El panel operativo muestra activos/totales, última aplicación, último intento y
 vigencia. Sin historial, la vigencia es desconocida; no se inventa una fecha a
@@ -153,8 +141,8 @@ sincronización desde esa consulta ni se detiene automáticamente el chat por ed
 
 La sincronización sigue separada del worker. No se añadió aplicación automática
 periódica ni se activó ninguna tarea del sistema. Si necesitas automatizarla,
-define una política explícita de revisión/aceptación; no reutilices una huella
-vieja para saltarte cambios de datos.
+define una política explícita de revisión/aceptación y mantén la protección de
+bajas masivas.
 
 ## Activación pendiente
 

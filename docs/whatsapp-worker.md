@@ -33,8 +33,7 @@ El worker ya no llama a `sync_inventory`. `INVENTORY_SYNC_MINUTES` dejó de
 controlar su ejecución. La sincronización se hace explícitamente con el comando
 existente `sync_inventory`, manualmente o con una tarea separada si se desea.
 
-La sincronización posterior muestra una vista previa por defecto y exige una
-huella para aplicar. Actualiza por SKU/nombre, conserva IDs y desactiva ausentes. Revisa `docs/inventory-sync.md` antes de cualquier
+La sincronización carga el catálogo directamente (`--dry-run` para solo ver los cambios). Actualiza por SKU/nombre, conserva IDs y desactiva ausentes. Revisa `docs/inventory-sync.md` antes de cualquier
 automatización: no hay aplicación automática sin revisión en el worker. No se
 creó ni ejecutó ninguna sincronización automática durante estas tareas.
 

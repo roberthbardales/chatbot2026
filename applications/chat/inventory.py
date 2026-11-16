@@ -12,9 +12,9 @@ def preview_inventory():
     return preview()
 
 
-def sync_inventory(*, confirm=None, allow_large_drop=False):
+def sync_inventory(*, allow_large_drop=False):
     from .inventory_sync import apply_inventory
-    return apply_inventory(confirm=confirm, allow_large_drop=allow_large_drop)
+    return apply_inventory(allow_large_drop=allow_large_drop)
 
 
 def _normalize(value):
