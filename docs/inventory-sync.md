@@ -26,8 +26,8 @@ salida resumida, añade `--json` (con o sin `--dry-run`).
 El resultado indica altas, campos que cambian, productos ausentes que se
 desactivarían, cambios explícitos de activo a inactivo y filas sin cambios. El
 comando requiere acceso al entorno y a PostgreSQL. No existe
-un endpoint público para aplicar el catálogo y no se agregó un botón de
-sincronización automática al panel.
+un endpoint público para aplicar el catálogo ni un botón de
+sincronización: solo se ejecuta con el comando.
 
 ## Identificadores y bajas lógicas
 
@@ -98,7 +98,7 @@ de miles ni se infiere una moneda.
 
 Cada fila importada es la representación completa del producto, no un
 parche parcial: un campo opcional ausente/vacío puede pasar a vacío o desconocido.
-Esos cambios se muestran antes de confirmar; revisa especialmente precios y
+Esos cambios se ven antes de aplicar con `--dry-run`; revisa especialmente precios y
 stock cuando cambien cabeceras de la hoja.
 
 Los precios del inventario activo permanecen `Decimal` al consultar
@@ -123,11 +123,11 @@ el historial ni se restauran instantáneas anteriores.
 El estado (activos/totales, última aplicación y vigencia) se imprime al final de
 cada ejecución de `sync_inventory` y se calcula sin descargar CSV.
 
-El panel operativo muestra activos/totales, última aplicación, último intento y
+`inventory_status()` calcula activos/totales, última aplicación, último intento y
 vigencia. Sin historial, la vigencia es desconocida; no se inventa una fecha a
 partir de los productos existentes. Se avisa de catálogo vacío, sin confirmación
 reciente, desactualizado o con último intento fallido. No se inicia una
-sincronización desde esa consulta ni se detiene automáticamente el chat por edad.
+sincronización desde esa consulta ni se detiene automáticamente el bot por edad.
 
 ## Configuración del `.env` raíz
 
@@ -144,19 +144,10 @@ periódica ni se activó ninguna tarea del sistema. Si necesitas automatizarla,
 define una política explícita de revisión/aceptación y mantén la protección de
 bajas masivas.
 
-## Activación pendiente
+## Activación
 
-Se añadió `chat/0012_inventory_sync_tracking`. Las migraciones de la base habitual
-y la activación del worker siguen reservadas para el final por indicación del
-usuario. La migración solo crea tablas de control/historial, no sincroniza datos.
-Durante esta implementación no se descargó ni aplicó el catálogo real, no se
-arrancó el worker y no se enviaron mensajes reales.
+Las tablas de control (`InventorySyncLock`, `InventorySyncRun`) están en `core/0001_initial`. Tras `python manage.py migrate`, ejecuta `sync_inventory --dry-run` para revisar y `sync_inventory` para cargar el catálogo.
 
 ## Verificación
 
-La suite completa pasó 291 pruebas, incluidas 25 nuevas de inventario. Cubren
-vistas previas sin escrituras, identidad estable, reactivación de bajas lógicas,
-validación de CSV/precios/stock, bloqueos de bajas masivas, confirmaciones
-obsoletas, rollback y aplicaciones simultáneas con conexiones independientes.
-Las comprobaciones de Django y migraciones, JavaScript y `git diff --check`
-finalizaron sin problemas. No se descargó ni aplicó el catálogo real.
+Las pruebas de `applications/core/tests/test_inventory_sync.py` cubren vistas previas sin escrituras, identidad estable, reactivación de bajas lógicas, validación de CSV/precios/stock, bloqueos de bajas masivas, rollback y aplicaciones simultáneas con conexiones independientes. Ninguna descarga el catálogo real.

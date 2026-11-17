@@ -8,12 +8,9 @@ migraciones de la base habitual continúan pendientes para el final**, por
 indicación del usuario. No se instaló un servicio, se recibió tráfico real de
 Meta ni se hicieron envíos reales para comprobar estos escenarios.
 
-No se añadió una migración de funcionalidad en esta etapa. Las pruebas de
-migración sí revierten/reaplican el esquema de su base aislada, nunca el habitual.
-
 ## Workers y fallos simulados
 
-`applications/whatsapp/test_recovery.py` usa PostgreSQL y conexiones independientes,
+`applications/whatsapp/tests/test_recovery.py` usa PostgreSQL y conexiones independientes,
 con proveedores simulados. Comprueba:
 
 - Dos procesadores sobre el mismo grupo pendiente: una respuesta y una salida.
@@ -30,8 +27,8 @@ con proveedores simulados. Comprueba:
 Se inyecta una excepción especial en puntos controlados, no se mata un worker
 real del sistema. Los plazos vencidos se simulan sobre filas de pruebas, sin
 esperar diez minutos ni modificar relojes del servidor. Otras pruebas ya cubren
-tokens antiguos, límites, eventos de entrega simultáneos y fuera de orden,
-reactivaciones concurrentes y sincronizaciones concurrentes del catálogo.
+tokens antiguos, límites
+y sincronizaciones concurrentes del catálogo.
 
 ### Límite demostrado: aceptación remota sin confirmación local
 
@@ -41,38 +38,28 @@ reintento puede generar una segunda aceptación remota. La prueba registra dos
 aceptaciones simuladas de forma explícita.
 
 **No hay garantía de entrega exactamente una vez.** Un token protege la propiedad
-local, no cancela una operación ya aceptada por Meta. El seguimiento de eventos
-ayuda cuando el ID es conocido, pero no reconstruye mágicamente una respuesta
-de envío que nunca se guardó. Esta etapa documenta y comprueba ese riesgo; no
+local, no cancela una operación ya aceptada por Meta. No se reconstruye una
+respuesta de envío que nunca se guardó. Esta etapa documenta y comprueba ese riesgo; no
 lo presenta como eliminado.
 
 ## Migraciones con datos antiguos
 
-`applications/whatsapp/test_migration_upgrade.py` crea en la base de pruebas un
-esquema anterior a estas mejoras: `chat/0009` y `whatsapp/0003`. Inserta catálogo,
-combos, mensajes en procesamiento y salidas pendientes/aceptadas; luego aplica
-todas las migraciones actuales.
-
-Verifica precios exactos, IDs conservados, grupos distintos para salidas antiguas,
-contextos vacíos compatibles y recuperación de mensajes abandonados. Las salidas
-ya aceptadas siguen aceptadas, sin inventar IDs remotos, entrega o lectura.
-El esquema actual se repone incluso si la prueba falla, antes del vaciado de la
-base de pruebas que hace Django.
+Las migraciones se reiniciaron (`core`, `users` y `whatsapp` con `0001_initial`), por lo que ya no existe una prueba de actualización desde esquemas anteriores. Una base creada con las migraciones antiguas (`chat_*`) debe recrearse: borrar la base, `migrate` y `sync_inventory`.
 
 ## Ensayo real de pg_dump y pg_restore, solo aislado
 
-`applications/chat/test_backup_restore.py` ejecuta herramientas reales de
+`applications/core/tests/test_backup_restore.py` ejecuta herramientas reales de
 PostgreSQL sobre datos sintéticos:
 
 1. Exige fuente `test_*`, distinta de `DB_NAME` habitual, y conexión en autocommit.
 2. Comprueba que `pg_dump`, `pg_restore` y el servidor tienen la misma versión mayor.
-3. Crea fixtures de usuarios/sesiones, chat, catálogo, contexto, cuotas, latidos,
-   cola pendiente/fallida/aceptada, eventos y auditoría.
+3. Crea fixtures de usuarios/sesiones, catálogo, contexto, cuotas, latidos,
+   cola pendiente/fallida/aceptada y latidos del worker.
 4. Genera un archivo custom temporal de la base de pruebas completa.
 5. Crea una base nueva con nombre aleatorio `test_rehearsal_<uuid>` y verifica
    que su plantilla no contenga tablas de aplicación.
 6. Restaura allí, nunca sobre la fuente. Verifica IDs, precios Decimal, JSON,
-   sesiones, estados de salida, auditoría, relaciones,
+   sesiones, estados de salida, relaciones,
    historial de migraciones, secuencias y restricciones FK.
 7. Cierra conexiones y elimina únicamente la base generada que creó el ensayo,
    además de su archivo temporal. No usa `DROP ... FORCE` ni termina sesiones ajenas.
@@ -87,7 +74,7 @@ no borres bases mediante comodines ni termines sesiones ajenas.
 Comando específico:
 
 ```powershell
-.\venv\Scripts\python.exe manage.py test applications.chat.test_backup_restore --noinput --verbosity 2
+.\venv\Scripts\python.exe manage.py test applications.core.tests.test_backup_restore --noinput --verbosity 2
 ```
 
 Se pueden indicar ejecutables con `TEST_PG_DUMP` y `TEST_PG_RESTORE` si no están
@@ -137,7 +124,7 @@ en un destino nuevo, provisionado y validado por el responsable de PostgreSQL.
 
 - Mantén webhooks/procesos de escritura controlados y el worker detenido hasta
   completar la validación del destino y su configuración.
-- Comprueba versión, extensión, migraciones, IDs, integridad, catálogo, auditoría,
+- Comprueba versión, extensión, migraciones, IDs, integridad, catálogo,
   usuarios, sesiones y cuotas, además de permisos y secretos.
 - Revisa toda salida pendiente/fallida recuperada. Una copia anterior puede
   decir «pendiente» de un mensaje que Meta aceptó después de esa copia.

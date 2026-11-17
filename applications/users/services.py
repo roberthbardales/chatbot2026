@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 
-from applications.chat.limits import client_address, enforce_rates, identity
+from applications.core.limits import client_address, enforce_rates, identity
 
 from .models import User
 

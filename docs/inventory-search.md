@@ -1,8 +1,7 @@
 # Búsqueda de inventario y seguimiento de consultas
 
 
-La mejora se aplica a Google Sheets/inventario local, tanto en el chat web como
-en WhatsApp. No usa embeddings.
+La mejora se aplica a Google Sheets/inventario local en WhatsApp. No usa embeddings.
 
 ## Búsqueda
 
@@ -61,18 +60,16 @@ del SKU o número. La búsqueda visual no constituye identificación garantizada
 El contexto solo guarda `selected_sku` o una lista de SKU candidatos. Los precios,
 stock y demás valores se vuelven a obtener del inventario activo en cada consulta.
 Si un producto se elimina o desactiva, no se reutilizan sus valores anteriores.
-Una búsqueda sin resultados limpia el contexto. Un mensaje manual del operador,
-al no contener contexto automático, también interrumpe esa selección automática.
+Una búsqueda sin resultados limpia el contexto.
 
 ## Persistencia y seguridad
 
-Se añade `inventory_context` a los mensajes del chat y de WhatsApp. Se guarda
-únicamente en la respuesta del asistente, dentro de la transacción existente.
-En WhatsApp se respeta el token de propiedad del intento y el modo humano.
+Se añade `inventory_context` a los mensajes de WhatsApp. Se guarda
+únicamente en la respuesta del asistente, dentro de la transacción existente,
+respetando el token de propiedad del intento.
 Los resultados especulativos de un intento antiguo no se guardan.
 
-El contexto se consulta exclusivamente dentro de la conversación o contacto
-actual. No se extrae de instrucciones libres escritas por el cliente ni de textos
+El contexto se consulta exclusivamente dentro del contacto actual. No se extrae de instrucciones libres escritas por el cliente ni de textos
 de respuestas antiguas. Los registros anteriores empiezan sin contexto; no se
 intenta inferir retrospectivamente un producto.
 
@@ -80,23 +77,6 @@ Se mantiene la protección comercial: la salida de la IA solo puede seleccionar
 SKU recuperados y campos permitidos; los valores visibles los redacta el servidor.
 Una salida inválida o un fallo del proveedor utiliza datos locales seguros.
 
-## Activación y verificación
+## Activación
 
-Migraciones nuevas:
-
-- `applications/chat/migrations/0010_message_inventory_context.py`.
-- `applications/whatsapp/migrations/0007_message_inventory_context.py`.
-
-Detén los servicios anteriores, ejecuta desde la raíz:
-
-```powershell
-.\venv\Scripts\python.exe manage.py migrate
-```
-
-Después reinicia los servicios. Estas tareas no aplicaron las migraciones a la
-base de datos habitual, no sincronizaron el catálogo y no enviaron WhatsApps reales.
-
-Verificación al completar esta mejora: 164 pruebas aprobadas, `manage.py check`
-sin problemas, `makemigrations --check --dry-run` sin migraciones por generar y
-`git diff --check` sin errores. Las pruebas simulan los proveedores externos y
-utilizan la base de datos de pruebas.
+El contexto se incluye en la migración inicial (`whatsapp/0001_initial`); no requiere pasos adicionales. Comprueba con `python manage.py test applications.core applications.whatsapp`.

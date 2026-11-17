@@ -7,7 +7,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.generic import View
 from django.views.generic.edit import FormView
 
-from applications.chat.limits import LimitExceeded
+from applications.core.limits import LimitExceeded
 
 from .forms import LoginForm, UpdatePasswordForm, UserRegisterForm
 from .mixins import AdministradorPermisoMixin

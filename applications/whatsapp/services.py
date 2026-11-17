@@ -7,14 +7,13 @@ from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 
-from applications.chat.providers import OPENROUTER, ProviderError
-from applications.chat.responses import InventoryAnswer
-from applications.chat.services import _sheet_context, answer_sheet_message
-from applications.chat.limits import LimitExceeded, enforce_rates, identity, principal_slot
+from applications.core.providers import OPENROUTER, ProviderError
+from applications.core.responses import InventoryAnswer
+from applications.core.services import answer_sheet_message, latest_inventory_context
+from applications.core.limits import LimitExceeded, enforce_rates, identity, principal_slot
 
 from .meta_api import MAX_TEXT_LENGTH, WhatsAppAPIError, download_media_data, send_text_message
 from .models import Outbox, WhatsAppContact, WhatsAppMessage
-from .delivery import apply_delivery_events, reconcile_delivery_events
 
 logger = logging.getLogger(__name__)
 PROCESSING_ERROR = 'No pude procesar tu mensaje en este momento. Por favor, inténtalo nuevamente en unos minutos.'
@@ -121,7 +120,7 @@ def _recover_abandoned_messages(progress_callback=None):
                 continue
             exhausted = any(item.processing_attempts >= max(1, settings.WHATSAPP_PROCESSING_MAX_ATTEMPTS) for item in group)
             if exhausted:
-                # Tell the customer instead of failing silently (human mode stays silent).
+                # Tell the customer instead of failing silently.
                 _finish_processing(group, token, PROCESSING_ERROR, failed=True)
             else:
                 WhatsAppMessage.objects.filter(pk__in=[item.pk for item in group]).update(
@@ -136,7 +135,6 @@ def _recover_abandoned_messages(progress_callback=None):
 def _finish_processing(messages, token, response=None, failed=False):
     """Commit only while this attempt still owns every message in the batch."""
     with transaction.atomic():
-        # Serialize the final mode check with change_mode's contact update.
         contact = WhatsAppContact.objects.select_for_update().filter(pk=messages[0].contact_id).first()
         if contact is None:
             return False
@@ -146,9 +144,6 @@ def _finish_processing(messages, token, response=None, failed=False):
         ).order_by('id'))
         if len(owned) != len(messages):
             return False
-        if contact.mode == WhatsAppContact.HUMAN or not contact.is_active:
-            response = None
-            failed = False
         WhatsAppMessage.objects.filter(pk__in=[item.pk for item in owned]).update(
             status=WhatsAppMessage.FAILED if failed else WhatsAppMessage.PROCESSED,
             response=response or '', processed_at=timezone.now(),
@@ -158,7 +153,7 @@ def _finish_processing(messages, token, response=None, failed=False):
         if response is not None:
             if failed:
                 # An error reply must not erase the options the customer was choosing from.
-                response = InventoryAnswer(response, _sheet_context(SimpleNamespace(messages=contact.messages)))
+                response = InventoryAnswer(response, latest_inventory_context(contact.messages))
             assistant = _create_assistant_message(contact, response)
             enqueue_outbox(contact, assistant, response)
             WhatsAppContact.objects.filter(pk=contact.pk).update(last_message_at=timezone.now(), updated_at=timezone.now())
@@ -179,12 +174,6 @@ def _defer_processing(messages, token, retry_after):
             processing_attempts=models.F('processing_attempts') - 1,
         )
     return True
-
-
-def _bot_silenced(contact_pk):
-    """Human mode or a deactivated contact: the bot must not answer."""
-    return WhatsAppContact.objects.filter(pk=contact_pk).filter(
-        models.Q(mode=WhatsAppContact.HUMAN) | models.Q(is_active=False)).exists()
 
 
 def process_pending_messages(force=False, max_contacts=None, progress_callback=None, after_contact=None):
@@ -225,9 +214,6 @@ def process_pending_messages(force=False, max_contacts=None, progress_callback=N
         messages = claimable
         if not messages:
             continue
-        if _bot_silenced(message.contact_id):
-            count += int(_finish_processing(messages, token))
-            continue
         try:
             enforce_rates([(identity('whatsapp', message.contact.phone_number), settings.WHATSAPP_RATE_PER_CONTACT)])
         except LimitExceeded as exc:
@@ -239,14 +225,10 @@ def process_pending_messages(force=False, max_contacts=None, progress_callback=N
         if media_message:
             try:
                 image_data_url = download_media_data(media_message.media_id)
-            except WhatsAppAPIError:
+            except Exception:
                 logger.exception('Could not download WhatsApp media for %s', _masked_phone(message.contact.phone_number))
                 count += int(_finish_processing(messages, token, PROCESSING_ERROR, failed=True))
                 continue
-        # The mode may have changed while downloading media.
-        if _bot_silenced(message.contact_id):
-            count += int(_finish_processing(messages, token))
-            continue
         try:
             with principal_slot(identity('whatsapp', message.contact.phone_number)):
                 conversation = SimpleNamespace(
@@ -279,24 +261,18 @@ def _outbox_unlocked(now):
 
 
 def _outbox_eligible(now, max_attempts):
-    predecessors = Outbox.objects.filter(
-        group_id=models.OuterRef('group_id'), part_number__lt=models.OuterRef('part_number'), sent=False,
-    )
-    return Outbox.objects.annotate(blocked=models.Exists(predecessors)).filter(
-        blocked=False,
+    return Outbox.objects.filter(
         sent=False, failed_at__isnull=True, attempts__lt=max_attempts,
     ).filter(_outbox_unlocked(now)).filter(
         models.Q(next_attempt_at__isnull=True) | models.Q(next_attempt_at__lte=now)
     )
 
 
-def _finish_outbox(item, token, error=None, meta_message_id=None):
+def _finish_outbox(item, token, error=None):
     now = timezone.now()
     values = {'locked_at': None, 'lock_token': None, 'next_attempt_at': None}
     if error is None:
         values.update(sent=True, sent_at=now, last_error='')
-        if meta_message_id:
-            values.update(meta_message_id=meta_message_id, delivery_status='accepted')
     else:
         values['last_error'] = error.diagnostic()[:1000]
         if not error.retryable or item.attempts >= max(1, settings.WHATSAPP_OUTBOX_MAX_ATTEMPTS):
@@ -306,21 +282,10 @@ def _finish_outbox(item, token, error=None, meta_message_id=None):
             maximum = max(1, settings.WHATSAPP_OUTBOX_RETRY_MAX_SECONDS)
             delay = min(maximum, base * (2 ** min(max(0, item.attempts - 1), 30)))
             values['next_attempt_at'] = now + timedelta(seconds=delay)
-    with transaction.atomic():
-        updated = Outbox.objects.filter(pk=item.pk, sent=False, failed_at__isnull=True, lock_token=token).update(**values) == 1
-        if updated and meta_message_id and error is None:
-            apply_delivery_events(item.pk)
-        if updated and 'failed_at' in values:
-            Outbox.objects.filter(group_id=item.group_id, part_number__gt=item.part_number,
-                                  sent=False, failed_at__isnull=True).update(
-                failed_at=now, last_error=f'Dependency failed: part {item.part_number}',
-                locked_at=None, lock_token=None, next_attempt_at=None,
-            )
-    return updated
+    return Outbox.objects.filter(pk=item.pk, sent=False, failed_at__isnull=True, lock_token=token).update(**values) == 1
 
 
 def process_outbox(progress_callback=None):
-    reconcile_delivery_events()
     count = 0
     now = timezone.now()
     max_attempts = max(1, settings.WHATSAPP_OUTBOX_MAX_ATTEMPTS)
@@ -330,16 +295,6 @@ def process_outbox(progress_callback=None):
     ).update(failed_at=now, locked_at=None, lock_token=None, next_attempt_at=None)
     if exhausted:
         logger.warning('WhatsApp outbox attempts exhausted: count=%s', exhausted)
-    failed_predecessors = Outbox.objects.filter(
-        group_id=models.OuterRef('group_id'), part_number__lt=models.OuterRef('part_number'),
-        failed_at__isnull=False,
-    )
-    Outbox.objects.annotate(dependency_failed=models.Exists(failed_predecessors)).filter(
-        dependency_failed=True, sent=False, failed_at__isnull=True,
-    ).filter(_outbox_unlocked(now)).update(
-        failed_at=now, last_error='Dependency failed: an earlier part could not be sent',
-        locked_at=None, lock_token=None, next_attempt_at=None,
-    )
     # Re-evaluate after each send so later parts can advance in this same invocation.
     visited = set()
     for _ in range(20):
@@ -369,12 +324,11 @@ def process_outbox(progress_callback=None):
             item.attempts += 1
             item.save(update_fields=('locked_at', 'lock_token', 'attempts'))
         try:
-            result = send_text_message(item.contact.phone_number, item.content)
+            send_text_message(item.contact.phone_number, item.content)
         except WhatsAppAPIError as exc:
             if _finish_outbox(item, token, exc):
                 logger.warning('Queued WhatsApp send failed: outbox_id=%s attempt=%s error=%s',
                                item.pk, item.attempts, exc.diagnostic())
             continue
-        meta_message_id = result['messages'][0]['id'] if isinstance(result, dict) else None
-        count += int(_finish_outbox(item, token, meta_message_id=meta_message_id))
+        count += int(_finish_outbox(item, token))
     return count

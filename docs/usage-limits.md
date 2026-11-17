@@ -10,10 +10,7 @@ dependencias adicionales.
 | Variable | Predeterminado | Función |
 | --- | --- | --- |
 | `CHAT_RATE_WINDOW_SECONDS` | 60 | Ventana de frecuencia, en segundos |
-| `CHAT_RATE_PER_SESSION` | 20 | Peticiones web por sesión y ventana |
-| `CHAT_RATE_PER_USER` | 30 | Peticiones por usuario, compartidas entre sesiones |
-| `CHAT_RATE_PER_IP` | 120 | Peticiones por IP o prefijo IPv6 y ventana |
-| `CHAT_MAX_CONCURRENT_PER_PRINCIPAL` | 1 | Consultas simultáneas por usuario/sesión o contacto WhatsApp |
+| `CHAT_MAX_CONCURRENT_PER_PRINCIPAL` | 1 | Consultas simultáneas por contacto de WhatsApp |
 | `CHAT_REQUEST_LEASE_SECONDS` | 300 | Plazo mínimo de recuperación de consultas abandonadas |
 | `WHATSAPP_RATE_PER_CONTACT` | 20 | Grupos de mensajes procesados por contacto y ventana |
 | `AI_MAX_CONCURRENT_REQUESTS` | 4 | Llamadas simultáneas globales a OpenRouter |
@@ -22,30 +19,20 @@ dependencias adicionales.
 | `AI_MAX_OUTPUT_TOKENS` | 1024 | Máximo de salida enviado a OpenRouter como `max_tokens` |
 | `AI_MAX_PROMPT_CHARACTERS` | 24000 | Máximo de caracteres de pregunta/contexto más instrucciones de sistema |
 | `AI_IMAGE_TOKEN_RESERVE` | 10000 | Reserva adicional por imagen |
-| `AI_BUDGET_ALERT_PERCENT` | 80 | Umbral de aviso en logs, una vez por día |
 
 Los límites de frecuencia y los dos cupos diarios admiten `0` para desactivar ese
 límite específico. La concurrencia se mantiene en al menos 1. El plazo de la
 reserva de una consulta se amplía si hace falta para cubrir tres tiempos de
 espera del proveedor y un margen de 60 segundos.
 
-## Comportamiento web
+## Dónde se aplican
 
-Las peticiones no vacías dentro del tamaño permitido consumen frecuencia antes
-de validar la conversación y consultar servicios externos. Los errores de campo
-vacío o longitud se rechazan sin consumirla. Se aplican conjuntamente sesión,
-usuario autenticado e IP; cambiar la sesión no evita el límite de IP y cambiar
-de sesión/IP no evita el límite de usuario.
+- **WhatsApp:** `WHATSAPP_RATE_PER_CONTACT` por contacto, una consulta simultánea por contacto (`principal_slot`) y el cupo global de IA. Una denegación aplaza el mensaje (ver más abajo); no se avisa al cliente.
+- **Login y registro** (`users/services.py`): `AUTH_LOGIN_PER_EMAIL`, `AUTH_LOGIN_PER_IP` y `AUTH_REGISTER_PER_IP` sobre la ventana `AUTH_RATE_WINDOW_SECONDS`. Usan `enforce_rates`, `identity` y `client_address` de `core/limits.py`.
 
-Una denegación devuelve HTTP 429 con JSON `error`, `code`, `retry_after` y la
-cabecera `Retry-After`. El chat muestra una cuenta atrás y conserva el texto para
-reintentarlo. No reenvía automáticamente la pregunta. La denegación no guarda
-mensajes ni crea conversaciones. No se modifica una conversación ajena.
-
-Las llamadas externas se ejecutan fuera de la transacción que guarda los
-mensajes. Las reservas de consumo no desaparecen si falla la persistencia
-posterior de la respuesta. Los mensajes del usuario y asistente se guardan
-juntos al completar la respuesta.
+Las llamadas externas se ejecutan fuera de las transacciones que guardan datos.
+Las reservas de consumo no desaparecen si falla la persistencia posterior de la
+respuesta.
 
 ## IP y proxies
 
@@ -64,8 +51,8 @@ teléfono o correo en texto claro. Cambiar `SECRET_KEY` cambia estas identidades
 
 ## Cupo de IA y dinero real
 
-La protección global se aplica en `generate_response`, por lo que cubre chat,
-WhatsApp y reconocimiento visual. Cada llamada reserva una solicitud y un número
+La protección global se aplica en `generate_response`, por lo que cubre las
+respuestas de WhatsApp y el reconocimiento visual. Cada llamada reserva una solicitud y un número
 conservador de tokens: bytes UTF-8 de texto/sistema, margen de estructura, salida
 máxima y reserva configurable de imagen. Una consulta con imagen puede hacer
 más de una llamada y consume más de una reserva.
@@ -84,28 +71,22 @@ añadió envío de correo, SMS ni una plataforma externa de alertas.
 
 ## WhatsApp y recuperación
 
-El modo humano evita el consumo de frecuencia del bot. Los límites por contacto
+Los límites por contacto
 cuentan grupos procesados, no cada mensaje agrupado. Un bloqueo temporal por
 frecuencia, concurrencia o cupo devuelve los mensajes a `PENDING`, con
 `retry_after_at`, conservando su texto y sin encolar un aviso al cliente.
 
 La espera no consume los intentos de recuperación de mensajes abandonados. Los
 mensajes se retoman cuando vuelve a ejecutarse el procesador después del plazo;
-`force=True` omite el debounce, no los límites de uso. El panel muestra la fecha
-del siguiente intento. Un contexto demasiado grande no se reintenta para siempre:
-se marca fallido y se encola el aviso controlado habitual, respetando el modo humano.
+`force=True` omite el debounce, no los límites de uso. El siguiente intento
+queda en `retry_after_at`. Un contexto demasiado grande no se reintenta para siempre:
+se marca fallido y se encola el aviso controlado habitual.
 
 Las reservas de concurrencia se liberan en `finally`. Tras una caída, vencen
 automáticamente. Estos plazos son una protección operativa, no una garantía de
 cancelación de una llamada remota que sobreviva a su plazo.
 
 ## Operación
-
-Consultar el cupo local actual, sin llamar a Meta/OpenRouter ni procesar colas:
-
-```powershell
-.\venv\Scripts\python.exe manage.py ai_usage
-```
 
 Limpieza opcional y acotada a las tablas de control, para programar periódicamente:
 
@@ -126,15 +107,10 @@ a todos cuando se agota; ajusta los valores a tu tráfico y presupuesto.
 
 ## Activación
 
-Migraciones nuevas: `chat/0011_usage_controls` y
-`whatsapp/0008_message_rate_deferral`.
-
-Detén los procesos anteriores, ejecuta desde la raíz y reinicia los servicios:
+Las tablas de control están en `core/0001_initial` y el aplazamiento por límites
+en `whatsapp/0001_initial`. Detén los procesos anteriores, ejecuta desde la raíz
+y reinicia los servicios:
 
 ```powershell
 .\venv\Scripts\python.exe manage.py migrate
 ```
-
-Las migraciones no se aplicaron a la base habitual durante esta tarea. Las
-pruebas usan su propia base de datos y simulan los proveedores; no se ejecutan
-envíos reales ni sincronizaciones de catálogo.

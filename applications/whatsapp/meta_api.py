@@ -108,6 +108,8 @@ def send_text_message(phone_number, text):
 def download_media_data(media_id):
     if not settings.WHATSAPP_ACCESS_TOKEN or not media_id:
         raise WhatsAppAPIError('WhatsApp media credentials are not configured')
+    if not isinstance(media_id, str) or not media_id.isalnum():
+        raise WhatsAppAPIError('WhatsApp media id is invalid')
     request = Request(
         f'https://graph.facebook.com/{settings.WHATSAPP_API_VERSION}/{media_id}',
         headers={'Authorization': f'Bearer {settings.WHATSAPP_ACCESS_TOKEN}'},
@@ -116,10 +118,14 @@ def download_media_data(media_id):
     try:
         with urlopen(request, timeout=15) as response:
             metadata = json.loads(response.read().decode('utf-8'))
+        if not isinstance(metadata, dict):
+            raise WhatsAppAPIError('WhatsApp media metadata is invalid')
         media_url = metadata.get('url')
         mime_type = metadata.get('mime_type', 'image/jpeg')
         if not media_url:
             raise WhatsAppAPIError('WhatsApp media URL is missing')
+        if not isinstance(media_url, str) or not media_url.startswith('https://'):
+            raise WhatsAppAPIError('WhatsApp media URL is invalid')
         media_request = Request(
             media_url,
             headers={'Authorization': f'Bearer {settings.WHATSAPP_ACCESS_TOKEN}'},

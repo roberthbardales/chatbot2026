@@ -17,7 +17,7 @@ Entre un contacto y el siguiente, el worker ejecuta `process_outbox`, de modo qu
 las respuestas ya generadas no esperan a que termine toda la tanda entrante. Un
 fallo del envío se registra en `last_error` pero no detiene el procesamiento de
 entrantes. Si un mensaje abandonado agota `WHATSAPP_PROCESSING_MAX_ATTEMPTS`,
-pasa a `failed` y se encola el aviso de error al cliente (salvo en modo humano).
+pasa a `failed` y se encola el aviso de error al cliente.
 
 ```powershell
 .\venv\Scripts\python.exe manage.py whatsapp_worker
@@ -46,9 +46,9 @@ Cada proceso registra un `WorkerHeartbeat` con identificador propio:
 - `phase`, `last_error` y `stopped_at`: fase, tipo de error sin detalles privados
   y parada controlada.
 
-Un latido reciente no oculta un bucle atascado. El panel `/whatsapp/` muestra los
-estados: activo, detenido, no iniciado, sin latido, sin progreso y con errores.
-La consulta está protegida por los permisos de administrador/empleado.
+Un latido reciente no oculta un bucle atascado. `worker_health()` distingue los
+estados: activo, detenido, no iniciado, sin latido, sin progreso y con errores;
+se consulta con `whatsapp_healthcheck` (no hay panel web).
 
 Comprobación de solo lectura:
 
@@ -65,11 +65,6 @@ desde un supervisor independiente, por ejemplo cada minuto. Las plantillas gener
 errores en el journal o en el resultado de la tarea. Para avisos por correo u otro
 canal, conecta esos fallos a tu plataforma de monitorización; no se implementó
 un servicio externo de notificaciones.
-
-Para incluir también acumulación de colas, fallos de configuración y cupo de
-IA, se añadió posteriormente `whatsapp_operations_check --warnings-as-errors`.
-Puede sustituir o complementar la comprobación del supervisor al hacer la
-activación final; consulta `docs/whatsapp-operations.md`.
 
 ## Configuración
 
@@ -91,7 +86,7 @@ real depende de la carga y los proveedores, no es una garantía de dos segundos.
 ## Despliegue seguro
 
 1. Detén los procesos anteriores para no mezclar versiones de webhook y worker.
-2. Aplica las migraciones, incluida `whatsapp/0009_worker_heartbeat`:
+2. Aplica las migraciones:
 
    ```powershell
    .\venv\Scripts\python.exe manage.py migrate
@@ -99,10 +94,9 @@ real depende de la carga y los proveedores, no es una garantía de dos segundos.
 
 3. Publica los estáticos si tu despliegue lo requiere y reinicia el servidor web.
 4. Configura el worker continuo bajo supervisión usando una de las opciones siguientes.
-5. Comprueba `whatsapp_healthcheck` y revisa el panel. Una prueba real de WhatsApp
+5. Comprueba `whatsapp_healthcheck`. Una prueba real de WhatsApp
    requiere autorización y un destinatario controlado: no se realizó aquí.
 
-La migración crea solo la tabla de latidos; no inicia procesos ni envía mensajes.
 El `.env` raíz debe estar disponible para la cuenta del servicio, con PostgreSQL,
 credenciales y permisos correctos. No incluyas secretos en argumentos de tareas
 o archivos unit. No se instaló ni activó ninguna tarea o servicio del sistema.
