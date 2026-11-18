@@ -52,6 +52,9 @@ SECRET_KEY=clave-secreta-larga
 DEBUG=False
 ALLOWED_HOSTS=tu-dominio.com,www.tu-dominio.com
 
+# Nginx delante de Gunicorn: así Django toma la IP real del cliente (ver docs/usage-limits.md)
+TRUSTED_PROXY_COUNT=1
+
 DB_NAME=chatbot2026
 DB_USER=chatbot
 DB_PASSWORD=clave-segura
@@ -91,6 +94,7 @@ CREATE DATABASE chatbot2026 OWNER chatbot;
 source venv/bin/activate
 python manage.py migrate
 python manage.py collectstatic --noinput
+python manage.py createsuperuser
 python manage.py sync_inventory
 python manage.py check
 ```
@@ -171,12 +175,66 @@ https://tu-dominio.com/whatsapp/webhook/
 
 Suscribir el campo `messages` en Meta Developers.
 
-El flujo actual procesa WhatsApp directamente desde el webhook. No es necesario ejecutar `whatsapp_worker`.
+El webhook solo valida la firma y guarda el mensaje. **El worker (`whatsapp_worker`) es obligatorio para responder**: sin él los mensajes quedan pendientes. Ver la sección 11.
 
-## 11. Revisar Errores
+## 11. Crear Servicio Del Worker De WhatsApp
+
+El worker procesa los mensajes pendientes y envía las respuestas por Meta. **Envía WhatsApps reales**.
+
+```bash
+sudo nano /etc/systemd/system/chatbot2026-whatsapp-worker.service
+```
+
+```ini
+[Unit]
+Description=Chatbot2026 WhatsApp worker (envía mensajes reales)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=TU_USUARIO
+WorkingDirectory=/var/www/chatbot2026
+ExecStart=/var/www/chatbot2026/venv/bin/python manage.py whatsapp_worker
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable chatbot2026-whatsapp-worker
+sudo systemctl start chatbot2026-whatsapp-worker
+sudo systemctl status chatbot2026-whatsapp-worker
+```
+
+Comprobación de solo lectura (no envía nada):
+
+```bash
+source venv/bin/activate
+python manage.py whatsapp_healthcheck
+```
+
+Debe mostrar `"healthy": true`. Para vigilarlo cada minuto hay plantillas en `deploy/systemd/`
+(`chatbot-whatsapp-health.service` y `.timer`); ajusta el usuario y las rutas antes de instalarlas.
+Detalle en `docs/whatsapp-worker.md`.
+
+## 12. Panel De Operadores
+
+El panel está en `https://tu-dominio.com/whatsapp/`. Entran el superusuario y las cuentas de tipo
+Administrador o Empleado (crea el primer superusuario con `python manage.py createsuperuser`).
+Permite ver las conversaciones, atender un contacto a mano y vigilar el estado del sistema.
+Ver `docs/whatsapp-panel.md`.
+
+## 13. Revisar Errores
 
 ```bash
 sudo journalctl -u chatbot2026 -f
+sudo journalctl -u chatbot2026-whatsapp-worker -f
 sudo tail -f /var/log/nginx/error.log
 ```
 
@@ -192,7 +250,7 @@ El despliegue de producción está operativo con esta configuración:
 - Gunicorn: `26.2.0`
 - PostgreSQL: `12`
 - Base de datos: `db_chatbot2026`
-- Extensión PostgreSQL `vector`: habilitada
+- Extensión PostgreSQL `vector`: habilitada (ya no se usa)
 - Gunicorn: `127.0.0.1:8006`
 - Módulo WSGI: `chatbot2026.wsgi:application`
 - Servicio systemd: `chatbot2026.service`
@@ -221,6 +279,8 @@ Internet/HTTPS
 
 No modificar puertos, Nginx, systemd, PostgreSQL, dominio, SSL ni la arquitectura del despliegue salvo que sea estrictamente necesario.
 
+Notas (2026-11-17): los datos de arriba son los registrados del servidor y no se han modificado. `requirements.txt` ahora fija Django 5.2; al ejecutar `pip install -r requirements.txt` en una actualización, pip ajustará Django a esa versión. Si el servicio del worker de WhatsApp todavía no existe en este servidor, créalo con la sección 11: sin él el bot no responde.
+
 ## Actualización De Producción
 
 ```bash
@@ -232,6 +292,8 @@ python manage.py migrate
 python manage.py collectstatic --noinput
 python manage.py check
 systemctl restart chatbot2026
+systemctl restart chatbot2026-whatsapp-worker
+python manage.py whatsapp_healthcheck
 ```
 
 No sobrescribir `.env`, credenciales ni la base de datos durante una actualización.

@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -214,3 +215,30 @@ class TruncatedListingTests(TestCase):
 
     def test_a_single_product_never_gets_the_note(self):
         self.assertNotIn('en total', answer_sheet_message(self.conversation, 'sku SER-1'))
+
+    def test_english_field_names_from_the_ai_are_accepted(self):
+        Product.objects.filter(sku='SER-1').update(brand='Anua', category='Sérum y ampolla')
+        for fields in (['brand'], ['marca'], ['Marca'], ['category', 'price'], ['categoría']):
+            with self.subTest(fields=fields):
+                self.generate.return_value = json.dumps({'productos': [{'sku': 'SER-1', 'campos': fields}]})
+                answer = answer_sheet_message(self.conversation, 'sku SER-1')
+                self.assertNotIn('no tengo', answer)
+        self.generate.return_value = '{"productos":[{"sku":"SER-1","campos":["brand"]}]}'
+        answer = answer_sheet_message(self.conversation, 'sku SER-1')
+        self.assertIn('marca Anua', answer)
+        self.assertNotIn('está a', answer)
+
+    def test_unknown_field_names_still_fall_back_to_price_and_stock(self):
+        self.generate.return_value = '{"productos":[{"sku":"SER-1","campos":["descuento","brand"]}]}'
+        answer = answer_sheet_message(self.conversation, 'sku SER-1')
+        self.assertIn('está a 10.00', answer)
+        self.assertIn('hay 5', answer)
+
+    def test_note_and_options_match_what_the_ai_actually_shows(self):
+        # La IA decide qué productos mostrar y omite uno: el aviso y las opciones guardadas lo reflejan.
+        self.generate.return_value = '{"productos":[{"sku":"SER-1","campos":["precio"]}]}'
+        answer = answer_sheet_message(self.conversation, 'categoría: serum')
+        self.assertIn('Serum 1', answer)
+        self.assertNotIn('Serum 2', answer)
+        self.assertIn('Hay 3 productos en total y te muestro 1', answer)
+        self.assertEqual(answer.inventory_context, {'candidates': ['SER-1']})

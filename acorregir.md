@@ -1,6 +1,6 @@
 # A corregir
 
-Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 263 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
+Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 268 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
 
 ## Hecho
 
@@ -20,6 +20,10 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 - **Código duplicado y envoltorios:** `services.py` usa `normalize_text` de `inventory.py`; `inventory.py` ya no tiene `preview_inventory`/`sync_inventory` y el comando importa de `inventory_sync`.
 - **Listados cortados en 5 sin avisar** (`services.py`): ahora se busca entre todos los productos y, si hay más de los que se muestran, el bot lo dice («Hay 64 productos en total y te muestro 5. Si me dices la marca, el tipo o el tamaño, afino la búsqueda»). Ver `docs/inventory-search.md`.
 - **Panel de operadores** (`/whatsapp/`): conversaciones con estado de cada envío, salud del worker, colas, catálogo y consumo de IA, modo humano y envío manual, con actualización automática cada 5 s. Reintroduce `WhatsAppContact.mode` y `WhatsAppMessage.is_manual` (migración `0003`). Ver `docs/whatsapp-panel.md`.
+- **Preguntas por marca, categoría o descripción** (`responses.py`): la IA devolvía `brand` o `category` y el servidor lo rechazaba, así que «y la marca?» respondía precio y stock. Ahora se aceptan esos nombres en inglés como equivalentes de los españoles.
+- **Aviso de listados con número equivocado** (`services.py`): si la IA omitía un producto, el aviso decía «te muestro 5» aunque se veían 4. Ahora el aviso y las opciones guardadas corresponden a lo que se muestra.
+- **Frases con vocabulario industrial** (`responses.py`, `services.py`): «te busco otra medida», «confírmame el modelo o la medida» y «tipo, marca o conexión» ahora hablan de producto y tamaño. Una prueba vigila que los textos del cliente no vuelvan a incluir palabras como medida, conexión, pulgada o válvula.
+- **Documentación al día:** README (versión de Django, enlace roto a `contexto.md`, `createsuperuser`, `TRUSTED_PROXY_COUNT`), `usage-limits.md` (modo humano y panel) y `vps.md` (el worker es obligatorio: servicio systemd, panel y comprobación de salud). Nueva guía `docs/probar-el-bot.md`.
 - **Pillow** quitado de `requirements.txt` (solo servía al panel).
 - **Documentación** reescrita para el bot solo de WhatsApp.
 

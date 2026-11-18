@@ -9,13 +9,13 @@ Aplicación Django para gestión de usuarios y atención automatizada de WhatsAp
 - Analiza imágenes recibidas por WhatsApp y busca coincidencias reales del inventario; requiere un modelo de OpenRouter compatible con imágenes.
 - Conserva el historial de cada contacto para recordar el producto elegido.
 - Panel web para ver las conversaciones, tomar el control de un contacto (modo humano) y vigilar el sistema.
-- Utiliza Python, Django 6.1.3, PostgreSQL y plantillas con Tailwind Play CDN; no requiere compilación frontend.
+- Utiliza Python, Django 5.2, PostgreSQL y plantillas con Tailwind Play CDN; no requiere compilación frontend.
 
-Para los flujos y diagramas, consulta [arquitectura.md](arquitectura.md). Para estructura del código, configuración y detalles técnicos, consulta [contexto.md](contexto.md).
+Para entender cómo responde el bot paso a paso, consulta [comofunciona.md](comofunciona.md); para los flujos y diagramas, [arquitectura.md](arquitectura.md); para la estructura del código y los detalles técnicos, [docs/arquitectura.md](docs/arquitectura.md); y para probarlo, [docs/probar-el-bot.md](docs/probar-el-bot.md).
 
 ## Requisitos
 
-- Python 3.10+
+- Python 3.10 o superior (probado con 3.12)
 - PostgreSQL
 
 ## Instalación
@@ -43,7 +43,6 @@ OPENROUTER_API_KEY=tu-clave-de-openrouter
 OPENROUTER_MODEL=openai/gpt-4o-mini
 SYSTEM_PROMPT=Eres un asistente útil y profesional.
 GOOGLE_SHEET_PRODUCTS_CSV_URL=https://docs.google.com/spreadsheets/d/.../export?format=csv
-INVENTORY_SYNC_MINUTES=5
 MAX_PRODUCTS_IN_CONTEXT=5
 HISTORY_LIMIT=20
 MESSAGE_DEBOUNCE_SECONDS=6
@@ -52,12 +51,15 @@ WHATSAPP_ACCESS_TOKEN=token-de-meta
 WHATSAPP_APP_SECRET=secreto-de-la-app
 WHATSAPP_PHONE_NUMBER_ID=id-del-numero-de-whatsapp
 WHATSAPP_API_VERSION=v26.0
+# Opcional: número de proxies propios delante de Django (Nginx = 1). 0 usa solo REMOTE_ADDR.
+TRUSTED_PROXY_COUNT=0
 ```
 
 ## Ejecución
 
 ```powershell
 python manage.py migrate
+python manage.py createsuperuser
 python manage.py sync_inventory
 ```
 
@@ -106,8 +108,7 @@ muestra conversaciones, el estado de cada envío, la salud del worker, las colas
 catálogo y el consumo de IA, y permite pasar un contacto a modo humano y escribirle.
 El envío manual solo encola: el worker debe estar activo para enviarlo a Meta. La salud
 del worker también se comprueba con `python manage.py whatsapp_healthcheck`. Consulta
-`docs/whatsapp-panel.md` y
-`docs/whatsapp-worker.md` para configurar arranque, reinicio y monitorización en
+`docs/whatsapp-panel.md` y `docs/whatsapp-worker.md` para configurar arranque, reinicio y monitorización en
 Windows o Linux. Sin worker, los mensajes quedan pendientes aunque lleguen otros.
 Gemini, Groq, DummyJSON y el RAG vectorial se eliminaron. El inventario
 activo es Google Sheets y la búsqueda de productos es textual, sin embeddings.

@@ -81,7 +81,9 @@ de respuestas antiguas. Los registros anteriores empiezan sin contexto; no se
 intenta inferir retrospectivamente un producto.
 
 Se mantiene la protección comercial: la salida de la IA solo puede seleccionar
-SKU recuperados y campos permitidos; los valores visibles los redacta el servidor.
+SKU recuperados y campos permitidos; los valores visibles los redacta el servidor. Los nombres de campo
+en inglés que la IA toma del inventario (`brand`, `category`, `specs`…) se aceptan como equivalentes
+de los españoles; cualquier otro nombre invalida la selección y se usan precio y stock.
 Una salida inválida o un fallo del proveedor utiliza datos locales seguros.
 
 ## Activación

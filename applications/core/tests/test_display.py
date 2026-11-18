@@ -61,3 +61,22 @@ class ZeroStockWordingTests(SimpleTestCase):
         text = _render_sheet_selection([(product('VAL-01', stock=1, unit='unidades'), ['stock'])], False)
         self.assertIn('hay 1 unidad.', text)
         self.assertNotIn('1 unidades', text)
+
+
+class CosmeticsWordingTests(SimpleTestCase):
+    """Los textos que ve el cliente no deben conservar vocabulario del catálogo industrial."""
+
+    INDUSTRIAL = ('medida', 'conexión', 'conexion', 'pulgada', 'válvula', 'valvula', 'tubería', 'bronce', 'npt')
+
+    def texts(self):
+        from ..responses import _CLOSERS
+        from ..services import PRODUCT_NOT_FOUND, _sheet_not_found
+        image_help = str(_sheet_not_found('data:image/jpeg;base64,abc'))
+        from_image = _render_sheet_selection([(product('VAL-01'), ['precio'])], True)
+        return [*_CLOSERS, PRODUCT_NOT_FOUND, image_help, from_image]
+
+    def test_customer_texts_have_no_industrial_vocabulary(self):
+        for text in self.texts():
+            for word in self.INDUSTRIAL:
+                with self.subTest(text=text[:40], word=word):
+                    self.assertNotIn(word, text.lower())

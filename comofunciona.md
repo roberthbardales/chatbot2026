@@ -128,7 +128,7 @@ Es la única lógica que entiende la pregunta.
 {"productos": [{"sku": "…", "campos": ["precio", "stock"]}]}
 ```
 
-El servidor rechaza cualquier otra cosa: claves extra, SKU que no estaba entre los recuperados, SKU repetido, campos no permitidos (los permitidos son precio, stock, marca, modelo, categoría, especificaciones y descripción). Si la IA falla, no hay clave o responde algo inválido, se usan **precio y stock** por defecto.
+La IA ve el inventario con claves en inglés y a veces devuelve `brand` o `category` en vez de `marca` o `categoria`; esos nombres (y `price`, `model`, `specs`, `description`) se aceptan como equivalentes, con o sin tilde. El servidor rechaza cualquier otra cosa: claves extra, SKU que no estaba entre los recuperados, SKU repetido, campos no permitidos (los permitidos son precio, stock, marca, modelo, categoría, especificaciones y descripción). Si la IA falla, no hay clave o responde algo inválido, se usan **precio y stock** por defecto.
 
 **Paso 6: redacción.** El servidor escribe la frase («…: está a 12.50 y hay 40 unidades.») con los valores de la base de datos. Si falta un dato, dice «no tengo el precio en el inventario». El stock tiene cuatro formas: «hay 8 unidades», «está agotado» (stock 0 o `Disponible = No`), «está disponible; consulta la cantidad exacta» (`Disponible = Sí` sin cantidad) y «no tengo el stock en el inventario» (sin ningún dato). Se guarda `selected_sku` en el contexto para la siguiente pregunta.
 

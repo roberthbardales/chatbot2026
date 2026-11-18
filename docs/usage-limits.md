@@ -82,7 +82,7 @@ añadió envío de correo, SMS ni una plataforma externa de alertas.
 
 ## WhatsApp y recuperación
 
-Los límites por contacto
+En modo humano (ver `docs/whatsapp-panel.md`) el mensaje se registra sin consumir frecuencia ni cupo de IA. Los límites por contacto
 cuentan grupos procesados, no cada mensaje agrupado. Un bloqueo temporal por
 frecuencia, concurrencia o cupo devuelve los mensajes a `PENDING`, con
 `retry_after_at`, conservando su texto y sin encolar un aviso al cliente.
@@ -96,6 +96,12 @@ se marca fallido y se encola el aviso controlado habitual.
 Las reservas de concurrencia se liberan en `finally`. Tras una caída, vencen
 automáticamente. Estos plazos son una protección operativa, no una garantía de
 cancelación de una llamada remota que sobreviva a su plazo.
+
+## Dónde verlo
+
+El panel de WhatsApp (`/whatsapp/`) muestra en la tarjeta «IA hoy» las consultas y los tokens
+reservados del día frente a `AI_DAILY_REQUEST_LIMIT` y `AI_DAILY_TOKEN_LIMIT`. Son reservas
+locales (ver más arriba), no facturación.
 
 ## Operación
 

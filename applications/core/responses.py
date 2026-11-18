@@ -2,6 +2,7 @@
 import json
 import random
 import re
+import unicodedata
 
 
 class InventoryAnswer(str):
@@ -23,6 +24,25 @@ _SHEET_FIELDS = {
 }
 
 
+# La IA ve el inventario con claves en inglés (brand, category…) y a veces las devuelve tal cual en vez
+# de los nombres en español. Se aceptan como equivalentes; el conjunto sigue siendo cerrado.
+_FIELD_ALIASES = {
+    'price': 'precio', 'brand': 'marca', 'model': 'modelo', 'category': 'categoria',
+    'specs': 'especificaciones', 'specifications': 'especificaciones', 'description': 'descripcion',
+}
+
+
+def _canonical_field(field):
+    if not isinstance(field, str):
+        raise ValueError('Invalid inventory field')
+    name = unicodedata.normalize('NFKD', field.strip().lower())
+    name = ''.join(char for char in name if not unicodedata.combining(char))
+    name = _FIELD_ALIASES.get(name, name)
+    if name not in _SHEET_FIELDS:
+        raise ValueError('Invalid inventory field')
+    return name
+
+
 def _sheet_selection(raw, products):
     data = json.loads(raw)
     if not isinstance(data, dict) or set(data) != {'productos'}:
@@ -39,10 +59,9 @@ def _sheet_selection(raw, products):
         sku, fields = entry['sku'], entry['campos']
         if not isinstance(sku, str) or sku not in available or sku in seen:
             raise ValueError('Unknown or duplicate SKU')
-        if not isinstance(fields, list) or not fields or any(
-            not isinstance(field, str) or field not in _SHEET_FIELDS for field in fields
-        ):
+        if not isinstance(fields, list) or not fields:
             raise ValueError('Invalid inventory fields')
+        fields = [_canonical_field(field) for field in fields]
         seen.add(sku)
         selected.append((available[sku], list(dict.fromkeys(fields))))
     return selected
@@ -52,7 +71,7 @@ _OPENERS = ('¡Claro! ', '¡Mira! ', 'Listo 😉 ', '¡Va! ', '')
 _CLOSERS = (
     '¿Te ayudo con algo más? 😊',
     '¿Buscas otra cosa? 🙌',
-    'Si quieres, te busco otra medida 😉',
+    'Si quieres, te busco otro producto 😉',
     'Cualquier otra cosa, me dices 👍',
 )
 _CLOSER_PROBABILITY = 0.4
@@ -86,7 +105,7 @@ def _join_natural(parts):
 
 
 def _render_sheet_selection(selection, from_image):
-    lines = ['Estas son las posibles coincidencias; confírmame el modelo o la medida 👇'] if from_image else []
+    lines = ['Estas son las posibles coincidencias; confírmame cuál es o el tamaño 👇'] if from_image else []
     for index, (product, fields) in enumerate(selection):
         parts = []
         for field in fields:
