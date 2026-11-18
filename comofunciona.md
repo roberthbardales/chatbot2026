@@ -119,7 +119,7 @@ Es la única lógica que entiende la pregunta.
 **Paso 4: según el resultado**
 
 - **Ninguno** → «No encontré ese producto en el inventario disponible…» y pide marca o una característica más.
-- **Varios** → lista numerada («1. Nombre del producto»), y los SKU se guardan como `candidates`. Los SKU legibles se muestran; los identificadores internos de 32 o más caracteres hexadecimales no, porque el cliente no puede usarlos.
+- **Varios** → lista numerada de los primeros 5 («1. Nombre del producto»); si hay más, se indica cuántos son en total y se pide afinar. Los SKU mostrados se guardan como `candidates`. Los SKU legibles se muestran; los identificadores internos de 32 o más caracteres hexadecimales no, porque el cliente no puede usarlos.
 - **Uno** (o una categoría) → pasa al paso 5.
 
 **Paso 5: la IA elige qué mostrar.** Se le envía el producto (como *datos*, no instrucciones) y se le exige exactamente este JSON:
@@ -177,7 +177,7 @@ Mantenimiento: `cleanup_chat_limits` y `cleanup_whatsapp_data` (con `--dry-run` 
 ## 10. Límites conocidos
 
 - La búsqueda exige que **todos** los términos coincidan: un adjetivo que el producto no tenga anula el resultado.
-- Los listados por categoría muestran hasta 5 productos sin indicar si hay más.
+- Los listados muestran hasta 5 productos (`MAX_PRODUCTS_IN_CONTEXT`); si hay más, el bot lo avisa («Hay 64 productos en total y te muestro 5…»), pero la opción 6 en adelante solo se alcanza afinando la búsqueda con marca, tipo o tamaño.
 - De varias imágenes en un grupo de mensajes solo se analiza la última.
 - No hay panel ni modo humano: el bot responde siempre y no hay forma de intervenir desde la aplicación.
 - No hay sincronización automática del catálogo: depende del comando manual.

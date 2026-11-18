@@ -31,6 +31,11 @@ proceso y se renuevan solos cuando `sync_inventory` cambia el producto
 
 ## Confirmación y contexto
 
+La búsqueda se hace entre todos los productos, pero al cliente se le muestran como máximo
+`MAX_PRODUCTS_IN_CONTEXT` (5 por defecto). Si hay más, la respuesta añade «Hay N productos en
+total y te muestro 5…» para que el cliente afine con la marca, el tipo o el tamaño. Solo los
+productos mostrados se guardan como opciones elegibles.
+
 Si una búsqueda ordinaria encuentra varias opciones, el servidor devuelve una
 lista numerada de nombres y SKU y solicita una elección. No permite a la IA
 elegir arbitrariamente un producto y no muestra cifras hasta la confirmación.

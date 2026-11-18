@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from applications.whatsapp.models import WhatsAppContact, WhatsAppMessage
 from ..models import Product
@@ -180,3 +180,37 @@ class InventoryConversationTests(TestCase):
         confirmed = self.ask('sí')
         self.assertIn('VAL-01', confirmed)
         self.assertIn('está a 25', confirmed)
+
+
+@override_settings(MAX_PRODUCTS_IN_CONTEXT=2)
+class TruncatedListingTests(TestCase):
+    def setUp(self):
+        contact = WhatsAppContact.objects.create(phone_number='51900000009')
+        self.conversation = SimpleNamespace(provider='openrouter', messages=contact.messages)
+        for index in (1, 2, 3):
+            Product.objects.create(sku=f'SER-{index}', name=f'Serum {index}', category='Sérum y ampolla',
+                                   price='10.00', stock=5)
+        self.generate = patch('applications.core.services.generate_response', return_value='{}').start()
+        self.addCleanup(patch.stopall)
+
+    def test_search_listing_tells_the_customer_how_many_exist(self):
+        answer = answer_sheet_message(self.conversation, 'serum')
+        self.assertIn('1. Serum 1', answer)
+        self.assertIn('2. Serum 2', answer)
+        self.assertNotIn('Serum 3', answer)
+        self.assertIn('Hay 3 productos en total y te muestro 2', answer)
+        self.assertEqual(answer.inventory_context, {'candidates': ['SER-1', 'SER-2']})
+
+    def test_category_listing_tells_the_customer_how_many_exist(self):
+        answer = answer_sheet_message(self.conversation, 'categoría: serum')
+        self.assertIn('Serum 1', answer)
+        self.assertNotIn('Serum 3', answer)
+        self.assertIn('Hay 3 productos en total y te muestro 2', answer)
+
+    @override_settings(MAX_PRODUCTS_IN_CONTEXT=3)
+    def test_no_note_when_everything_is_shown(self):
+        self.assertNotIn('en total', answer_sheet_message(self.conversation, 'serum'))
+        self.assertNotIn('en total', answer_sheet_message(self.conversation, 'categoría: serum'))
+
+    def test_a_single_product_never_gets_the_note(self):
+        self.assertNotIn('en total', answer_sheet_message(self.conversation, 'sku SER-1'))

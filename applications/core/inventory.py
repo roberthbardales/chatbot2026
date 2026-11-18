@@ -108,6 +108,7 @@ def _forget_inactive_terms(active):
 
 
 def search_products(query, limit=6):
+    """Productos que coinciden, por nombre. `limit=None` devuelve todos."""
     active = list(Product.objects.filter(active=True).order_by('name', 'sku'))
     lowered = query.lower()
     # Primero la comparación barata de texto; la expresión regular solo para los candidatos.
@@ -131,7 +132,9 @@ def product_by_sku(sku):
 
 
 def category_products(category, limit=6):
-    """Productos activos cuya categoría contiene el texto, sin distinguir tildes ni mayúsculas."""
+    """Productos activos cuya categoría contiene el texto, sin distinguir tildes ni mayúsculas.
+
+    `limit=None` devuelve todos."""
     wanted = normalize_text(category)
     if not wanted:
         return []
@@ -139,6 +142,6 @@ def category_products(category, limit=6):
     for product in Product.objects.filter(active=True).exclude(category='').order_by('name', 'sku'):
         if wanted in normalize_text(product.category):
             products.append(_as_dict(product))
-            if len(products) >= limit:
+            if limit is not None and len(products) >= limit:
                 break
     return products

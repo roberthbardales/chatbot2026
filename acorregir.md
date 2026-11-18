@@ -1,6 +1,6 @@
 # A corregir
 
-Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 234 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
+Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 238 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
 
 ## Hecho
 
@@ -18,34 +18,34 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 - **Sinónimos de cosmética** (`_SEARCH_SYNONYMS`): `bloqueador`/`sunscreen` → `protector`, `cleanser` → `limpiador`, `cream` → `crema`, `labial` → `labios`, `ampollas` → `ampolla`, etc. Salieron del catálogo real; «bloqueador solar» pasó de 0 a decenas de resultados.
 - **Búsqueda más rápida** (`inventory.py`): la consulta se procesa una vez y los términos de cada producto se guardan en memoria, renovados por `content_hash` tras `sync_inventory`. Con el catálogo real, unos 15 ms por búsqueda. (No hay ranking por relevancia: se conserva el orden por nombre.)
 - **Código duplicado y envoltorios:** `services.py` usa `normalize_text` de `inventory.py`; `inventory.py` ya no tiene `preview_inventory`/`sync_inventory` y el comando importa de `inventory_sync`.
+- **Listados cortados en 5 sin avisar** (`services.py`): ahora se busca entre todos los productos y, si hay más de los que se muestran, el bot lo dice («Hay 64 productos en total y te muestro 5. Si me dices la marca, el tipo o el tamaño, afino la búsqueda»). Ver `docs/inventory-search.md`.
 - **Pillow** quitado de `requirements.txt` (solo servía al panel).
 - **Documentación** reescrita para el bot solo de WhatsApp.
 
 ## Medios
 
 1. **Siempre se llama a la IA, aunque no haga falta.** Con un solo producto la IA solo elige qué campos mostrar y se le envía el producto entero. Opcional: resolver sin IA preguntas simples («¿precio?», «¿stock?») con los campos por defecto y ahorrar cupo y latencia.
-2. **Los listados se cortan en 5 sin avisar.** `MAX_PRODUCTS_IN_CONTEXT` recorta la lista y el cliente no sabe que hay más.
-3. **Mensajes no soportados sin respuesta.** El webhook descarta audio, ubicación, stickers y documentos sin contestar. Mejor responder «solo puedo leer texto e imágenes».
-4. **Sin panel ni modo humano.** No hay forma de intervenir en una conversación ni de reactivar un envío fallido desde la aplicación. Es una decisión de simplificación; documentarla o reconsiderarla según el uso real.
+2. **Mensajes no soportados sin respuesta.** El webhook descarta audio, ubicación, stickers y documentos sin contestar. Mejor responder «solo puedo leer texto e imágenes».
+3. **Sin panel ni modo humano.** No hay forma de intervenir en una conversación ni de reactivar un envío fallido desde la aplicación. Es una decisión de simplificación; documentarla o reconsiderarla según el uso real.
 
 ## Menores
 
-5. `providers.py::generate_response`: el chequeo de `OPENROUTER_API_KEY` está duplicado (también en `_openrouter`) y `return handler(prompt)` al final nunca se ejecuta (solo existe OpenRouter).
-6. `download_media_data` (`meta_api.py`) solo exige que la URL del medio empiece por `https://` y le envía el token de acceso. Restringir el dominio a los de Meta lo endurecería.
-7. Las tablas `UsageBucket` y `UsageLease` crecen con cada identidad: programar `cleanup_chat_limits`. Lo mismo con `cleanup_whatsapp_data`.
-8. Entrega «al menos una vez»: si el worker cae entre el envío a Meta y el registro (`_finish_outbox`), el bloqueo caduca y el mensaje se reenvía. Aceptable, pero documentado solo en `docs/arquitectura.md`.
-9. Los tests de `whatsapp` sobrescriben `WHATSAPP_DEFAULT_SOURCE`, un ajuste que ya no existe en `settings.py`; el `override_settings` no hace nada y se puede quitar.
-10. Código duplicado en `inventory_source.py`: `_available_stock` y `_availability` normalizan el valor de «Disponible» dos veces.
-11. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
-12. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
-13. El prompt a la IA incluye la `description` completa de cada producto (`services.py`). Con descripciones largas gasta más tokens de los necesarios; basta enviar los campos que la IA puede elegir.
-14. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
+4. `providers.py::generate_response`: el chequeo de `OPENROUTER_API_KEY` está duplicado (también en `_openrouter`) y `return handler(prompt)` al final nunca se ejecuta (solo existe OpenRouter).
+5. `download_media_data` (`meta_api.py`) solo exige que la URL del medio empiece por `https://` y le envía el token de acceso. Restringir el dominio a los de Meta lo endurecería.
+6. Las tablas `UsageBucket` y `UsageLease` crecen con cada identidad: programar `cleanup_chat_limits`. Lo mismo con `cleanup_whatsapp_data`.
+7. Entrega «al menos una vez»: si el worker cae entre el envío a Meta y el registro (`_finish_outbox`), el bloqueo caduca y el mensaje se reenvía. Aceptable, pero documentado solo en `docs/arquitectura.md`.
+8. Los tests de `whatsapp` sobrescriben `WHATSAPP_DEFAULT_SOURCE`, un ajuste que ya no existe en `settings.py`; el `override_settings` no hace nada y se puede quitar.
+9. Código duplicado en `inventory_source.py`: `_available_stock` y `_availability` normalizan el valor de «Disponible» dos veces.
+10. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
+11. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
+12. El prompt a la IA incluye la `description` completa de cada producto (`services.py`). Con descripciones largas gasta más tokens de los necesarios; basta enviar los campos que la IA puede elegir.
+13. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
 
 ## Orden sugerido
 
-1. Puntos 1 a 3 según prioridad (IA innecesaria, listados cortados, tipos de mensaje).
-2. Punto 4 es una decisión de diseño por revisar.
-3. Menores (5 a 14) cuando haya tiempo.
+1. Puntos 1 y 2 según prioridad (IA innecesaria, tipos de mensaje).
+2. Punto 3 es una decisión de diseño por revisar.
+3. Menores (4 a 13) cuando haya tiempo.
 
 ## Para activar lo nuevo
 

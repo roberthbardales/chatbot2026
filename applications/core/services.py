@@ -50,7 +50,12 @@ def latest_inventory_context(history):
     return context if isinstance(context, dict) else {}
 
 
-def _sheet_ambiguity(products, from_image=False):
+def _more_results_note(shown, total):
+    return (f'Hay {total} productos en total y te muestro {shown}. '
+            'Si me dices la marca, el tipo o el tamaño, afino la búsqueda 😉')
+
+
+def _sheet_ambiguity(products, from_image=False, total=None):
     if from_image:
         heading = '¡Mira! Encontré posibles coincidencias de la imagen 📸.'
     else:
@@ -62,6 +67,8 @@ def _sheet_ambiguity(products, from_image=False):
         f"{index}. {product['name']}" + (f" — SKU {display_sku(product['sku'])}" if display_sku(product['sku']) else '')
         for index, product in enumerate(products, 1)
     )
+    if total and total > len(products):
+        lines.append(_more_results_note(len(products), total))
     return InventoryAnswer('\n'.join(lines), {'candidates': [product['sku'] for product in products]})
 
 
@@ -147,9 +154,9 @@ No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamen
             re.I,
         )
         if category_match:
-            products = sheet_category_products(category_match.group(1).strip(), settings.MAX_PRODUCTS_IN_CONTEXT)
+            products = sheet_category_products(category_match.group(1).strip(), None)
         else:
-            products = sheet_search_products(search_text, settings.MAX_PRODUCTS_IN_CONTEXT)
+            products = sheet_search_products(search_text, None)
             candidates = context.get('candidates', [])
             if candidates and not image_data_url:
                 narrowed = [product for product in products if product['sku'] in candidates]
@@ -161,10 +168,13 @@ No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamen
                     products = narrowed
     if not products:
         return _sheet_not_found(image_data_url)
+    # Se busca entre todos los productos; al cliente se le muestran solo los primeros y se le avisa si hay más.
+    total = len(products)
+    products = products[:settings.MAX_PRODUCTS_IN_CONTEXT]
     if image_data_url and not confirmed:
-        return _sheet_ambiguity(products, from_image=True)
+        return _sheet_ambiguity(products, from_image=True, total=total)
     if len(products) > 1 and not category_match:
-        return _sheet_ambiguity(products)
+        return _sheet_ambiguity(products, total=total)
     prompt = f'''Selecciona productos del inventario para responder la pregunta.
 Devuelve exclusivamente JSON con esta estructura:
 {{"productos": [{{"sku": "SKU recuperado", "campos": ["precio", "stock"]}}]}}
@@ -184,7 +194,10 @@ PREGUNTA: {text}'''
     response_context = {'selected_sku': products[0]['sku']} if len(products) == 1 else {
         'candidates': [product['sku'] for product in products]
     }
-    return InventoryAnswer(_render_sheet_selection(selection, False), response_context)
+    text = _render_sheet_selection(selection, False)
+    if total > len(products):
+        text += '\n' + _more_results_note(len(products), total)
+    return InventoryAnswer(text, response_context)
 
 
 def _sheet_not_found(image_data_url):
