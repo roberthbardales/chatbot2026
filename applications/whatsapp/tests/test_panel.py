@@ -170,6 +170,15 @@ class PanelDataTests(TestCase):
         data = self.client.get(reverse('conversation-messages', args=[self.contact.pk])).json()
         self.assertEqual(data['messages'][0]['delivery']['state'], 'delivered')
 
+    def test_pending_outbox_counts_only_bot_replies(self):
+        url = reverse('conversation-messages', args=[self.contact.pk])
+        self.outbox(self.reply('del operador', manual=True))
+        self.assertEqual(self.client.get(url).json()['pending_outbox'], 0)
+        self.outbox(self.reply('del bot'))
+        self.assertEqual(self.client.get(url).json()['pending_outbox'], 1)
+        Outbox.objects.filter(message__text='del bot').update(sent=True)
+        self.assertEqual(self.client.get(url).json()['pending_outbox'], 0)
+
     def test_unknown_contact_is_404(self):
         self.assertEqual(self.client.get(reverse('conversation-messages', args=[999999])).status_code, 404)
 

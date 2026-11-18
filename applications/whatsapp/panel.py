@@ -116,5 +116,7 @@ def conversation_payload(contact):
     return {
         'conversation': contact_payload(contact),
         'messages': [message_payload(message) for message in messages],
-        'pending_outbox': contact.outbox.filter(sent=False, failed_at__isnull=True).count(),
+        # Solo envíos del bot: los mensajes del propio operador no son lo que se «enviará igual».
+        'pending_outbox': contact.outbox.filter(sent=False, failed_at__isnull=True,
+                                                message__is_manual=False).count(),
     }
