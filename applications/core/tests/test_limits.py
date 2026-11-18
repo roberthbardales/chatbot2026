@@ -44,6 +44,31 @@ class AdmissionTests(TestCase):
         request = Mock(META={'REMOTE_ADDR': '192.0.2.1', 'HTTP_X_FORWARDED_FOR': '198.51.100.1'})
         self.assertEqual(client_address(request), '192.0.2.1')
 
+    @override_settings(TRUSTED_PROXY_COUNT=1)
+    def test_one_trusted_proxy_uses_the_last_forwarded_entry(self):
+        request = Mock(META={'REMOTE_ADDR': '10.0.0.1',
+                             'HTTP_X_FORWARDED_FOR': '198.51.100.9, 203.0.113.7'})
+        self.assertEqual(client_address(request), '203.0.113.7')
+
+    @override_settings(TRUSTED_PROXY_COUNT=2)
+    def test_two_trusted_proxies_skip_the_entry_added_by_the_second(self):
+        request = Mock(META={'REMOTE_ADDR': '10.0.0.1',
+                             'HTTP_X_FORWARDED_FOR': '198.51.100.9, 203.0.113.7, 172.16.0.5'})
+        self.assertEqual(client_address(request), '203.0.113.7')
+
+    @override_settings(TRUSTED_PROXY_COUNT=2)
+    def test_short_or_invalid_forwarded_header_falls_back_to_remote_addr(self):
+        for header in ('203.0.113.7', 'no-es-ip, tampoco', ''):
+            with self.subTest(header=header):
+                request = Mock(META={'REMOTE_ADDR': '10.0.0.1', 'HTTP_X_FORWARDED_FOR': header})
+                self.assertEqual(client_address(request), '10.0.0.1')
+
+    @override_settings(TRUSTED_PROXY_COUNT=1)
+    def test_forwarded_ipv6_is_grouped_by_prefix(self):
+        first = client_address(Mock(META={'REMOTE_ADDR': '10.0.0.1', 'HTTP_X_FORWARDED_FOR': '2001:db8:1:1::1'}))
+        second = client_address(Mock(META={'REMOTE_ADDR': '10.0.0.1', 'HTTP_X_FORWARDED_FOR': '2001:db8:1:1::2'}))
+        self.assertEqual(first, second)
+
     def test_ipv6_privacy_addresses_share_prefix(self):
         first = client_address(Mock(META={'REMOTE_ADDR': '2001:db8:1:1::1'}))
         second = client_address(Mock(META={'REMOTE_ADDR': '2001:db8:1:1::2'}))

@@ -19,7 +19,12 @@ El worker independiente debe ejecutarlo; el webhook ya no procesa las colas.
 
 ## Estados y errores
 
-- `sent=True`: Meta aceptó el envío; no confirma entrega ni lectura.
+- `sent=True`: Meta aceptó el envío; no confirma entrega ni lectura. Meta devuelve un
+  identificador de mensaje que se guarda en `meta_message_id`.
+- `delivery_status`: último estado que Meta notificó por el webhook (`sent`,
+  `delivered`, `read` o `failed`), con `delivery_updated_at`. Solo avanza; un
+  `failed` posterior queda en `delivery_error` (código y título de Meta), salvo
+  que el mensaje ya figure como leído. Un estado de un identificador desconocido se ignora.
 - `failed_at` informado: fuera de los reintentos automáticos.
 - `next_attempt_at` futuro: esperando el próximo intento.
 - `locked_at` y `lock_token`: un intento posee el envío actualmente.
@@ -49,12 +54,14 @@ el encabezado en el límite de 4096 caracteres. Se conservan los separadores y
 el texto completo en el mensaje original. Cada parte tiene su propio `Outbox`,
 con `group_id` compartido y `part_number` consecutivo.
 
-Las partes se envían en orden de creación y son independientes: un fallo temporal
-de una parte se reintenta más tarde y las demás siguen, por lo que pueden llegar
-desordenadas. No se repiten las partes ya aceptadas. Cada ejecución procesa como máximo 20
-intentos; las partes restantes necesitan otra ejecución.
+Las partes de un grupo se envían **en orden**: una parte espera a que las anteriores
+hayan sido aceptadas por Meta. Si una parte falla de forma temporal, las siguientes
+esperan a su reintento. Si falla de forma definitiva, las siguientes del grupo se
+marcan como fallidas sin enviarse (`last_error` lo indica), para no entregar un
+mensaje incompleto y desordenado. No se repiten las partes ya aceptadas. Cada
+ejecución procesa como máximo 20 intentos; las partes restantes necesitan otra ejecución.
 
-**Límite conocido:** el orden solo se garantiza dentro de un grupo. Si una
+**Límite conocido:** el orden entre grupos distintos no se garantiza. Si una
 respuesta está en espera de reintento y se encola otra para el mismo contacto
 (por ejemplo, la respuesta a un mensaje posterior del cliente), la segunda puede salir antes.
 Es una decisión deliberada: priorizar que la cola nunca quede atascada detrás de

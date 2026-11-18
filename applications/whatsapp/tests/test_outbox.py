@@ -57,6 +57,35 @@ class WhatsAppMultipartTests(TestCase):
         self.message.refresh_from_db()
         self.assertEqual(self.message.text, 'x' * 9000)
 
+    def test_later_parts_wait_while_an_earlier_part_is_retrying(self):
+        parts = self.queue()
+        self.send.side_effect = WhatsAppAPIError('rate limit', code=130429)
+        self.assertEqual(process_outbox(), 0)
+        self.assertEqual(self.send.call_count, 1)
+        self.assertEqual(self.send.call_args.args[1], parts[0].content)
+        self.assertEqual(list(Outbox.objects.order_by('part_number').values_list('attempts', flat=True)), [1, 0, 0])
+        # Cuando vence la espera, las partes salen en orden.
+        self.send.side_effect = None
+        Outbox.objects.update(next_attempt_at=None)
+        self.assertEqual(process_outbox(), 3)
+        self.assertEqual([call.args[1] for call in self.send.call_args_list][1:], [part.content for part in parts])
+
+    def test_later_parts_are_discarded_when_an_earlier_part_fails_for_good(self):
+        self.queue()
+        self.send.side_effect = WhatsAppAPIError('bad recipient', code=131026)
+        self.assertEqual(process_outbox(), 0)
+        self.assertEqual(process_outbox(), 0)
+        self.assertEqual(self.send.call_count, 1)
+        self.assertEqual(Outbox.objects.filter(failed_at__isnull=False).count(), 3)
+        self.assertEqual(Outbox.objects.filter(sent=True).count(), 0)
+
+    def test_meta_message_id_is_stored_when_the_send_is_accepted(self):
+        self.send.return_value = {'messages': [{'id': 'wamid.ACCEPTED'}]}
+        enqueue_outbox(self.contact, self.message, 'Hola')
+        self.assertEqual(process_outbox(), 1)
+        item = Outbox.objects.get()
+        self.assertEqual((item.meta_message_id, item.delivery_status), ('wamid.ACCEPTED', 'sent'))
+
     def test_partial_enqueue_is_rolled_back(self):
         create = Outbox.objects.create
         calls = 0

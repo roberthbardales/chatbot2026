@@ -21,6 +21,31 @@ def _normalize_product_text(value):
     return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
 
 
+# Saludos, agradecimientos y despedidas: se contestan sin buscar en el catálogo ni llamar a la IA.
+_SMALLTALK_WORDS = {
+    'greeting': 'hola holi buenas buenos buen dia dias tarde tardes noche noches saludos hey hello hi que tal como estas estan',
+    'thanks': 'gracias muchas muchisimas mil genial perfecto excelente ok okay vale listo entendido dale buenisimo',
+    'farewell': 'adios chau chao bye hasta luego pronto despues nos vemos',
+}
+_SMALLTALK_CATEGORY = {word: kind for kind, words in _SMALLTALK_WORDS.items() for word in words.split()}
+_SMALLTALK_REPLIES = {
+    'greeting': '¡Hola! 👋 Soy el asistente de la tienda. Escríbeme el nombre del producto o su categoría y te digo precio y stock.',
+    'thanks': '¡De nada! 😊 Si necesitas algo más, escríbeme el nombre del producto.',
+    'farewell': '¡Hasta pronto! 👋 Aquí estaré cuando necesites otro producto.',
+}
+
+
+def _smalltalk_reply(text):
+    """Respuesta fija si el mensaje es solo un saludo, un agradecimiento o una despedida."""
+    tokens = _normalize_product_text(text).split()
+    kinds = {_SMALLTALK_CATEGORY.get(token) for token in tokens}
+    if not tokens or None in kinds:
+        return None
+    for kind in ('thanks', 'farewell', 'greeting'):
+        if kind in kinds:
+            return _SMALLTALK_REPLIES[kind]
+
+
 def latest_inventory_context(history):
     """Contexto de inventario de la última respuesta del bot en el historial de un contacto de WhatsApp."""
     if history is None:
@@ -64,6 +89,11 @@ def _sheet_context_choice(context, text):
 
 def answer_sheet_message(conversation, text, image_data_url=None):
     context = latest_inventory_context(getattr(conversation, 'messages', None))
+    if not image_data_url:
+        reply = _smalltalk_reply(text)
+        if reply:
+            # Se conserva el contexto: tras un «gracias» el cliente aún puede decir «y el stock?».
+            return InventoryAnswer(reply, context)
     search_text = text
     if image_data_url:
         vision_prompt = '''Analiza la imagen para buscar un producto en un inventario industrial.

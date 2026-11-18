@@ -72,6 +72,11 @@ class Outbox(models.Model):
     failed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     group_id = models.UUIDField(default=uuid.uuid4, db_index=True)
     part_number = models.PositiveIntegerField(default=1)
+    # Seguimiento que informa Meta después de aceptar el envío (webhook `statuses`).
+    meta_message_id = models.CharField(max_length=255, blank=True, db_index=True)
+    delivery_status = models.CharField(max_length=16, blank=True)
+    delivery_updated_at = models.DateTimeField(null=True, blank=True)
+    delivery_error = models.CharField(max_length=500, blank=True)
 
     class Meta:
         ordering = ('created_at', 'id')

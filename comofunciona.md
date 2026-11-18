@@ -59,7 +59,7 @@ Cliente ─► Meta ─► POST /whatsapp/webhook/ ─► firma HMAC ─► cola
 - Meta firma cada petición; el sistema recalcula el HMAC-SHA256 sobre el cuerpo original y rechaza (403) lo que no coincide.
 - Solo se aceptan eventos del número de teléfono configurado, y solo mensajes de **texto e imagen**. Otros tipos (audio, ubicación, stickers) se ignoran sin responder.
 - Cada mensaje se guarda como `WhatsAppMessage` en estado `pending`, **deduplicado por `message_id`** (Meta puede reenviar).
-- El webhook **no** llama a la IA, no descarga imágenes y no envía nada. Responde 200 cuanto antes. Los avisos de estado de entrega de Meta (`sent`, `delivered`, `read`) se ignoran.
+- El webhook **no** llama a la IA, no descarga imágenes y no envía nada. Responde 200 cuanto antes. Los avisos de estado de Meta (`sent`, `delivered`, `read`, `failed`) no generan respuestas: solo actualizan el estado del envío correspondiente (sección 4.3).
 
 ### 4.2 Proceso: el worker
 
@@ -83,10 +83,10 @@ Entre un contacto y el siguiente, el worker **ejecuta también la fase de salida
 respuesta ─► Outbox (1 o varias partes) ─► send_text_message ─► Meta ─► cliente
 ```
 
-- Un mensaje de WhatsApp admite 4096 caracteres. Las respuestas más largas se parten en **«Parte i/n»**; cada parte es una fila del `Outbox`, enlazadas por un grupo.
+- Un mensaje de WhatsApp admite 4096 caracteres. Las respuestas más largas se parten en **«Parte i/n»**; cada parte es una fila del `Outbox`, enlazadas por un grupo. **Una parte no sale hasta que la anterior fue aceptada**; si una falla definitivamente, las siguientes se descartan para no entregar un mensaje incompleto.
 - El worker reclama cada parte con un bloqueo y **cuenta el intento al reclamarla**, así un fallo a mitad no permite reintentos infinitos.
 - Si Meta falla de forma temporal, se reintenta con espera creciente (30 s, 60 s, 120 s… hasta 1 hora) y hasta 5 intentos. Si el error es permanente (por ejemplo, credenciales), la parte falla de inmediato.
-- Cuando Meta acepta el mensaje, la parte queda `sent=True`. **«Enviado» significa «aceptado por Meta»; no se hace seguimiento de entrega ni lectura.**
+- Cuando Meta acepta el mensaje, la parte queda `sent=True`. **«Enviado» significa «aceptado por Meta».** Después, Meta avisa por el webhook si el mensaje se entregó, se leyó o falló; ese estado (`delivery_status`) y el motivo del fallo (`delivery_error`) quedan en la fila del `Outbox`.
 
 ## 5. El cerebro: `answer_sheet_message`
 
@@ -95,6 +95,8 @@ Es la única lógica que entiende la pregunta.
 **Paso 1: contexto previo.** Mira el último mensaje del asistente al contacto y su `inventory_context`, que puede traer una lista de `candidates` (opciones ofrecidas) o un `selected_sku` (producto ya elegido). Así entiende «la 2» o «y el stock?».
 
 **Paso 2: imagen.** Si hay imagen, se le pide a la IA entre 3 y 8 palabras clave visibles (o `desconocido`), y se usan como texto de búsqueda. Una imagen nunca confirma un producto por sí sola: siempre se pide confirmación.
+
+**Paso 2b: saludos.** Si el mensaje es solo un saludo, un agradecimiento o una despedida («hola», «gracias», «chao»), se responde con un texto fijo, sin buscar en el catálogo ni llamar a la IA, y se conserva el contexto previo. Un mensaje que además pide algo («hola, tienes protector solar?») sigue el flujo normal.
 
 **Paso 3: decidir de qué producto se habla**, en este orden:
 
@@ -175,9 +177,7 @@ Mantenimiento: `cleanup_chat_limits` y `cleanup_whatsapp_data` (con `--dry-run` 
 ## 10. Límites conocidos
 
 - La búsqueda exige que **todos** los términos coincidan: un adjetivo que el producto no tenga anula el resultado.
-- Un saludo («hola») no tiene términos de búsqueda y recibe «No encontré ese producto…».
 - Los listados por categoría muestran hasta 5 productos sin indicar si hay más.
-- Si una parte de una respuesta larga se reintenta, otra parte puede llegar antes.
 - De varias imágenes en un grupo de mensajes solo se analiza la última.
 - No hay panel ni modo humano: el bot responde siempre y no hay forma de intervenir desde la aplicación.
 - No hay sincronización automática del catálogo: depende del comando manual.

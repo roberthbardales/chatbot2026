@@ -106,7 +106,10 @@ def _render_sheet_selection(selection, from_image):
                 parts.append('está agotado')
                 continue
             if field == 'stock' and product.get('unit'):
-                value = f"{value} {product['unit']}"
+                unit = product['unit']
+                if value == 1 and unit.lower() == 'unidades':
+                    unit = 'unidad'
+                value = f'{value} {unit}'
             parts.append(present.format(value=value))
         opener = random.choice(_OPENERS) if index == 0 and not from_image else ''
         sku = display_sku(product['sku'])

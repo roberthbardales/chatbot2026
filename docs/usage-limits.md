@@ -36,15 +36,26 @@ respuesta.
 
 ## IP y proxies
 
-La IP se obtiene exclusivamente de `REMOTE_ADDR`. Se ignora `X-Forwarded-For`
-para no confiar en cabeceras que puede falsificar el cliente. Las IPv4 mapeadas
+Por defecto la IP se obtiene exclusivamente de `REMOTE_ADDR` y se ignora
+`X-Forwarded-For`, para no confiar en cabeceras que puede falsificar el cliente. Las IPv4 mapeadas
 en IPv6 se normalizan a IPv4; las IPv6 se agrupan por prefijo /64 para que cambiar
 direcciones de privacidad no eluda el contador.
 
-Si hay Nginx, Cloudflare u otro proxy, configura el servidor de entrada para
-establecer una IP de cliente verificada y bloquear el acceso directo que eluda
-ese proxy. Si `REMOTE_ADDR` sigue siendo la IP del proxy, sus clientes comparten
-el contador. No habilites confianza indiscriminada en cabeceras reenviadas.
+Si hay Nginx, Cloudflare u otro proxy propio delante de Django, `REMOTE_ADDR` es la
+IP del proxy y todos los clientes compartirían el contador de login y registro.
+Para evitarlo, define en el `.env` cuántos proxies de confianza hay:
+
+| Variable | Predeterminado | Función |
+| --- | --- | --- |
+| `TRUSTED_PROXY_COUNT` | 0 | Número de proxies propios delante de Django. 0 = ignorar `X-Forwarded-For`. |
+
+Con `TRUSTED_PROXY_COUNT=n` se toma la entrada n-ésima de `X-Forwarded-For`
+contando desde la **derecha** (las que añadieron tus proxies); lo que está a la
+izquierda lo puede falsificar el cliente y se ignora. Ejemplos: Nginx solo → `1`;
+Cloudflare + Nginx → `2`. Si la cabecera trae menos entradas o no son IP válidas,
+se usa `REMOTE_ADDR`. Bloquea además el acceso directo al servidor que eluda el
+proxy, porque en ese caso el cliente podría enviar su propia cabecera. WhatsApp no
+usa la IP: solo afecta a login y registro.
 
 Las identidades se almacenan como HMAC usando el secreto de Django, no como IP,
 teléfono o correo en texto claro. Cambiar `SECRET_KEY` cambia estas identidades.

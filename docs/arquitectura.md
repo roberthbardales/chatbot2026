@@ -98,9 +98,9 @@ El worker (`whatsapp_worker`) ejecuta en bucle cada `WHATSAPP_WORKER_POLL_SECOND
 
 ### 4.3 Outbox y entrega
 
-- Los textos > 4096 caracteres se parten en «Parte i/n» con grupo (`group_id`, `part_number`); las partes son independientes: cada una se reintenta por separado y, si una falla, las demás pueden llegar antes o fallar sin arrastrarla (ver [whatsapp-outbox.md](whatsapp-outbox.md)).
+- Los textos > 4096 caracteres se parten en «Parte i/n» con grupo (`group_id`, `part_number`); las partes de un grupo se envían en orden: cada una espera a la anterior y, si una falla definitivamente, las siguientes se descartan (ver [whatsapp-outbox.md](whatsapp-outbox.md)).
 - Cada envío cuenta el intento al reclamar (un bloqueo caducado no permite intentos ilimitados). Reintento con backoff exponencial (base 30 s, tope 3600 s, 5 intentos); errores no reintentables fallan de inmediato.
-- «Encolado» ≠ «enviado»: `sent` indica que Meta aceptó el mensaje. No se hace seguimiento de entrega ni lectura; los *statuses* del webhook se ignoran.
+- «Encolado» ≠ «enviado»: `sent` indica que Meta aceptó el mensaje y se guarda su `meta_message_id`. Los *statuses* del webhook (`delivered`, `read`, `failed`) actualizan `Outbox.delivery_status` y `delivery_error`; solo avanzan, nunca retroceden.
 
 ### 4.4 Sincronización de inventario
 
@@ -124,7 +124,7 @@ Todo en PostgreSQL con bloqueos de fila, compartido entre procesos web y worker 
 | `principal_slot` | `UsageLease` | Una consulta simultánea por contacto. |
 | `ai_admission` | `UsageLease`, `AIUsageDay` | Concurrencia global de IA, tope de tamaño de prompt, cupo diario de peticiones y tokens **reservados** (conservador, no es facturación) y alerta por umbral. |
 
-Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forwarded-For` se ignora deliberadamente. Detalle en [usage-limits.md](usage-limits.md).
+Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forwarded-For` se ignora salvo que definas `TRUSTED_PROXY_COUNT` (proxies propios delante de Django). Detalle en [usage-limits.md](usage-limits.md).
 
 ## 6. Seguridad
 
@@ -154,7 +154,7 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 - **Sin panel ni modo humano**: el bot responde siempre; no se puede intervenir ni reactivar envíos desde la aplicación.
 - **Entrega al menos una vez**: si Meta acepta el envío y la base de datos falla antes de registrarlo, puede haber un duplicado.
 - Los límites de IA son reservas locales, no consumo real facturado.
-- **Orden de envío**: solo se garantiza dentro de un grupo; un envío en reintento no bloquea otros mensajes del mismo contacto (ver [whatsapp-outbox.md](whatsapp-outbox.md)).
+- **Orden de envío**: se garantiza dentro de un grupo (partes de una misma respuesta); entre grupos distintos, un envío en reintento no bloquea otros mensajes del mismo contacto (ver [whatsapp-outbox.md](whatsapp-outbox.md)).
 - **Mantenimiento**: `cleanup_whatsapp_data` purga latidos antiguos.
 
 ## 10. Documentos relacionados

@@ -17,7 +17,7 @@ con proveedores simulados. Comprueba:
 - Un mensaje nuevo mientras el contacto está ocupado: se difiere, no se pierde.
 - Dos procesadores de salida: cada parte independiente se envía una vez en el
   caso normal con confirmación guardada.
-- Una parte en vuelo: otro procesador no adelanta las siguientes.
+- Una parte en vuelo, o en espera de reintento: las siguientes del grupo no la adelantan.
 - Caída después de reclamar entrada: recuperación al vencer el intento.
 - Interrupción dentro de la transacción de respuesta: rollback sin asistente o
   cola parciales; recuperación posterior con una sola respuesta.

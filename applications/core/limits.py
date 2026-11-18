@@ -56,15 +56,44 @@ def enforce_rates(rules, window=None):
             bucket.save(update_fields=('window_started_at', 'count'))
 
 
-def client_address(request):
-    """Dirección del cliente (IPv6 agrupada por /64). Ignora X-Forwarded-For: lo controla el atacante salvo que un proxy lo sanee."""
+def _parse_ip(value):
     try:
-        parsed = ipaddress.ip_address(request.META.get('REMOTE_ADDR', ''))
-        if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
-            parsed = parsed.ipv4_mapped
-        return str(ipaddress.ip_network(f'{parsed}/64', strict=False).network_address) if parsed.version == 6 else str(parsed)
+        parsed = ipaddress.ip_address(value)
     except ValueError:
+        return None
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+        parsed = parsed.ipv4_mapped
+    return parsed
+
+
+def _forwarded_address(request):
+    """IP que añadió el último proxy de confianza, o None.
+
+    Con TRUSTED_PROXY_COUNT=n se toma la n-ésima entrada empezando por la derecha de
+    X-Forwarded-For: son las que añadieron nuestros proxies; lo que está a la izquierda
+    lo puede falsificar el cliente y se ignora.
+    """
+    trusted = max(0, settings.TRUSTED_PROXY_COUNT)
+    if not trusted:
+        return None
+    entries = [item.strip() for item in request.META.get('HTTP_X_FORWARDED_FOR', '').split(',') if item.strip()]
+    if len(entries) < trusted:
+        return None
+    return _parse_ip(entries[-trusted])
+
+
+def client_address(request):
+    """Dirección del cliente (IPv6 agrupada por /64).
+
+    Por defecto usa solo REMOTE_ADDR e ignora X-Forwarded-For, que controla el cliente.
+    Detrás de proxies propios, define TRUSTED_PROXY_COUNT (ver docs/usage-limits.md).
+    """
+    parsed = _forwarded_address(request) or _parse_ip(request.META.get('REMOTE_ADDR', ''))
+    if parsed is None:
         return 'unknown'
+    if parsed.version == 6:
+        return str(ipaddress.ip_network(f'{parsed}/64', strict=False).network_address)
+    return str(parsed)
 
 
 @contextmanager

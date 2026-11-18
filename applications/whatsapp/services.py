@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from django.conf import settings
 from django.db import models, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from applications.core.providers import OPENROUTER, ProviderError
@@ -260,19 +261,35 @@ def _outbox_unlocked(now):
     return models.Q(locked_at__isnull=True) | models.Q(locked_at__lte=stale_lock)
 
 
+def _earlier_parts(**filters):
+    return Outbox.objects.filter(
+        group_id=OuterRef('group_id'), part_number__lt=OuterRef('part_number'), **filters)
+
+
 def _outbox_eligible(now, max_attempts):
+    # Una parte espera a que las anteriores de su grupo hayan sido aceptadas por Meta.
     return Outbox.objects.filter(
         sent=False, failed_at__isnull=True, attempts__lt=max_attempts,
     ).filter(_outbox_unlocked(now)).filter(
         models.Q(next_attempt_at__isnull=True) | models.Q(next_attempt_at__lte=now)
-    )
+    ).exclude(Exists(_earlier_parts(sent=False)))
 
 
-def _finish_outbox(item, token, error=None):
+def _meta_message_id(result):
+    """ID del mensaje que devuelve Meta al aceptar el envío ('' si la respuesta no lo trae)."""
+    try:
+        value = result['messages'][0]['id']
+    except (KeyError, IndexError, TypeError):
+        return ''
+    return value if isinstance(value, str) else ''
+
+
+def _finish_outbox(item, token, error=None, result=None):
     now = timezone.now()
     values = {'locked_at': None, 'lock_token': None, 'next_attempt_at': None}
     if error is None:
-        values.update(sent=True, sent_at=now, last_error='')
+        values.update(sent=True, sent_at=now, last_error='', meta_message_id=_meta_message_id(result),
+                      delivery_status='sent', delivery_updated_at=now, delivery_error='')
     else:
         values['last_error'] = error.diagnostic()[:1000]
         if not error.retryable or item.attempts >= max(1, settings.WHATSAPP_OUTBOX_MAX_ATTEMPTS):
@@ -295,6 +312,13 @@ def process_outbox(progress_callback=None):
     ).update(failed_at=now, locked_at=None, lock_token=None, next_attempt_at=None)
     if exhausted:
         logger.warning('WhatsApp outbox attempts exhausted: count=%s', exhausted)
+    # Si una parte falló para siempre, las siguientes del grupo no se envían fuera de orden.
+    orphaned = Outbox.objects.filter(sent=False, failed_at__isnull=True).filter(
+        Exists(_earlier_parts(failed_at__isnull=False))
+    ).update(failed_at=now, locked_at=None, lock_token=None, next_attempt_at=None,
+             last_error='[permanent] No se envía: una parte anterior del mismo mensaje falló.')
+    if orphaned:
+        logger.warning('WhatsApp outbox parts discarded after an earlier part failed: count=%s', orphaned)
     # Re-evaluate after each send so later parts can advance in this same invocation.
     visited = set()
     for _ in range(20):
@@ -324,11 +348,43 @@ def process_outbox(progress_callback=None):
             item.attempts += 1
             item.save(update_fields=('locked_at', 'lock_token', 'attempts'))
         try:
-            send_text_message(item.contact.phone_number, item.content)
+            result = send_text_message(item.contact.phone_number, item.content)
         except WhatsAppAPIError as exc:
             if _finish_outbox(item, token, exc):
                 logger.warning('Queued WhatsApp send failed: outbox_id=%s attempt=%s error=%s',
                                item.pk, item.attempts, exc.diagnostic())
             continue
-        count += int(_finish_outbox(item, token))
+        count += int(_finish_outbox(item, token, result=result))
     return count
+
+
+_DELIVERY_RANK = {'sent': 1, 'delivered': 2, 'read': 3}
+
+
+def record_delivery_status(meta_message_id, status, errors=None):
+    """Guarda el estado de entrega que Meta notifica por el webhook.
+
+    Solo avanza (sent -> delivered -> read); `failed` se registra salvo que ya esté leído.
+    Devuelve True si actualizó alguna fila.
+    """
+    if not meta_message_id or not isinstance(meta_message_id, str) or status not in {*_DELIVERY_RANK, 'failed'}:
+        return False
+    error = ''
+    if status == 'failed':
+        first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
+        error = f"{first.get('code', '')} {first.get('title') or first.get('message') or ''}".strip()[:500]
+    with transaction.atomic():
+        items = list(Outbox.objects.select_for_update().filter(meta_message_id=meta_message_id))
+        updated = 0
+        for item in items:
+            current = _DELIVERY_RANK.get(item.delivery_status, 0)
+            if item.delivery_status == 'read' or (status != 'failed' and _DELIVERY_RANK[status] <= current):
+                continue
+            item.delivery_status = status
+            item.delivery_updated_at = timezone.now()
+            item.delivery_error = error
+            item.save(update_fields=('delivery_status', 'delivery_updated_at', 'delivery_error'))
+            updated += 1
+    if status == 'failed' and updated:
+        logger.warning('WhatsApp delivery failed: outbox_message=%s error=%s', meta_message_id[-8:], error)
+    return bool(updated)

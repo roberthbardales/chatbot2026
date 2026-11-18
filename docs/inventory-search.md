@@ -60,7 +60,8 @@ del SKU o número. La búsqueda visual no constituye identificación garantizada
 El contexto solo guarda `selected_sku` o una lista de SKU candidatos. Los precios,
 stock y demás valores se vuelven a obtener del inventario activo en cada consulta.
 Si un producto se elimina o desactiva, no se reutilizan sus valores anteriores.
-Una búsqueda sin resultados limpia el contexto.
+Una búsqueda sin resultados limpia el contexto. Los saludos, agradecimientos y despedidas
+se contestan con un texto fijo, sin buscar ni llamar a la IA, y conservan el contexto.
 
 ## Persistencia y seguridad
 

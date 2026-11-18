@@ -196,6 +196,8 @@ WHATSAPP_OUTBOX_RETRY_MAX_SECONDS = env.int('WHATSAPP_OUTBOX_RETRY_MAX_SECONDS',
 WHATSAPP_OUTBOX_LOCK_SECONDS = env.int('WHATSAPP_OUTBOX_LOCK_SECONDS', default=600)
 CHAT_RATE_WINDOW_SECONDS = env.int('CHAT_RATE_WINDOW_SECONDS', default=60)
 # Límites de acceso (login y registro): intentos permitidos por ventana, 0 = sin límite.
+# Proxies propios delante de Django (Nginx, Cloudflare…). 0 = ignorar X-Forwarded-For y usar REMOTE_ADDR.
+TRUSTED_PROXY_COUNT = env.int('TRUSTED_PROXY_COUNT', default=0)
 AUTH_RATE_WINDOW_SECONDS = env.int('AUTH_RATE_WINDOW_SECONDS', default=900)
 AUTH_LOGIN_PER_EMAIL = env.int('AUTH_LOGIN_PER_EMAIL', default=5)
 AUTH_LOGIN_PER_IP = env.int('AUTH_LOGIN_PER_IP', default=30)

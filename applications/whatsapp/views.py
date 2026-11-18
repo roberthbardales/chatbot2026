@@ -8,7 +8,7 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .services import enqueue_message
+from .services import enqueue_message, record_delivery_status
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,11 @@ def webhook(request):
                     and metadata.get('phone_number_id') != settings.WHATSAPP_PHONE_NUMBER_ID
                 ):
                     continue
+                statuses = value.get('statuses', [])
+                if isinstance(statuses, list):
+                    for item in statuses:
+                        if isinstance(item, dict):
+                            record_delivery_status(item.get('id'), item.get('status'), item.get('errors'))
                 raw_contacts = value.get('contacts', [])
                 raw_messages = value.get('messages', [])
                 if not isinstance(raw_contacts, list) or not isinstance(raw_messages, list):

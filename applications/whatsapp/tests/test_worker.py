@@ -107,6 +107,52 @@ class AsyncWebhookTests(TestCase):
         self.assertEqual(self.post(payload).status_code, 200)
         self.assertFalse(WhatsAppMessage.objects.exists())
 
+    def status_payload(self, meta_id, status, **extra):
+        return {'entry': [{'changes': [{'value': {
+            'metadata': {'phone_number_id': 'number-123'},
+            'statuses': [{'id': meta_id, 'status': status, **extra}],
+        }}]}]}
+
+    def sent_item(self, meta_id='wamid.OUT1'):
+        contact = WhatsAppContact.objects.create(phone_number='51955550000')
+        message = WhatsAppMessage.objects.create(contact=contact, message_id='out-1', text='Respuesta',
+                                                 is_from_customer=False, status=WhatsAppMessage.PROCESSED)
+        return Outbox.objects.create(contact=contact, message=message, content='Respuesta', sent=True,
+                                     meta_message_id=meta_id, delivery_status='sent')
+
+    def test_delivery_statuses_advance_and_never_go_back(self):
+        item = self.sent_item()
+        for status, expected in [('delivered', 'delivered'), ('read', 'read'), ('delivered', 'read'), ('sent', 'read')]:
+            self.assertEqual(self.post(self.status_payload('wamid.OUT1', status)).status_code, 200)
+            item.refresh_from_db()
+            self.assertEqual(item.delivery_status, expected)
+        self.assertIsNotNone(item.delivery_updated_at)
+
+    def test_failed_status_records_the_meta_error(self):
+        item = self.sent_item()
+        payload = self.status_payload('wamid.OUT1', 'failed', errors=[{'code': 131047, 'title': 'Re-engagement message'}])
+        self.assertEqual(self.post(payload).status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.delivery_status, 'failed')
+        self.assertEqual(item.delivery_error, '131047 Re-engagement message')
+
+    def test_failed_status_does_not_overwrite_a_read_message(self):
+        item = self.sent_item()
+        self.post(self.status_payload('wamid.OUT1', 'read'))
+        self.post(self.status_payload('wamid.OUT1', 'failed', errors=[{'code': 1, 'title': 'x'}]))
+        item.refresh_from_db()
+        self.assertEqual((item.delivery_status, item.delivery_error), ('read', ''))
+
+    def test_unknown_or_malformed_statuses_are_ignored(self):
+        item = self.sent_item()
+        for payload in [self.status_payload('wamid.OTHER', 'delivered'),
+                        self.status_payload('wamid.OUT1', 'inventado'),
+                        self.status_payload(None, 'delivered'),
+                        {'entry': [{'changes': [{'value': {'statuses': ['x', 5, {'id': 1, 'status': []}]}}]}]}]:
+            self.assertEqual(self.post(payload).status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.delivery_status, 'sent')
+
     def test_non_object_payload_is_rejected(self):
         self.assertEqual(self.post([]).status_code, 400)
 

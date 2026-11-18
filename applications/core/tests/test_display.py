@@ -56,3 +56,8 @@ class ZeroStockWordingTests(SimpleTestCase):
     def test_positive_stock_is_unchanged(self):
         text = _render_sheet_selection([(product('VAL-01', stock=8, unit='unidades'), ['stock'])], False)
         self.assertIn('hay 8 unidades', text)
+
+    def test_single_unit_is_singular(self):
+        text = _render_sheet_selection([(product('VAL-01', stock=1, unit='unidades'), ['stock'])], False)
+        self.assertIn('hay 1 unidad.', text)
+        self.assertNotIn('1 unidades', text)
