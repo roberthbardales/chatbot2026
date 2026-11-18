@@ -5,13 +5,14 @@ Revisión documental: 2026-11-17. Describe el código actual, no certifica el es
 ## Resumen
 
 - **Problema que resuelve:** automatiza la atención de clientes por WhatsApp.
-- **Canal:** WhatsApp mediante Meta Cloud API. No hay chat web ni panel de administración.
+- **Canal:** WhatsApp mediante Meta Cloud API. No hay chat web; sí un panel de operadores en `/whatsapp/`.
 - **Funciones principales:**
   - Respuestas automáticas con IA.
   - Consulta de productos, precios y stock.
   - Soporte para mensajes de texto e imágenes.
   - Identificación visual de productos.
   - Historial por contacto, que permite recordar el producto elegido.
+  - Panel de operadores: conversaciones, estado de cada envío, salud del sistema, modo humano y envío manual.
 - **Inventario:** se administra desde Google Sheets y se sincroniza a PostgreSQL con `sync_inventory`; las consultas buscan textualmente en ese catálogo local, sin embeddings.
 - **Integraciones:** Meta WhatsApp Cloud API, Google Sheets, OpenRouter y PostgreSQL.
 - **Seguridad:**
@@ -21,7 +22,7 @@ Revisión documental: 2026-11-17. Describe el código actual, no certifica el es
   - No se almacenan permanentemente las imágenes recibidas.
 - **Estado operativo:** la cantidad de productos y el funcionamiento de las integraciones deben comprobarse en cada despliegue; no son cifras ni resultados garantizados por este documento.
 - **Limitaciones que conviene aclarar:**
-  - No hay modo humano ni panel: el bot responde siempre.
+  - Un mensaje manual solo se encola; el worker debe estar activo para enviarlo. Meta limita el texto libre a 24 h tras el último mensaje del cliente.
   - Las respuestas dependen de Meta, OpenRouter y el catálogo local; actualizar el catálogo depende de Google Sheets y del comando manual.
   - Se recomienda configurar correctamente HTTPS, copias de seguridad, monitoreo y rotación de credenciales antes de producción.
 
@@ -69,7 +70,8 @@ flowchart LR
 - **OpenRouter:** proveedor de inteligencia artificial.
 - **Google Sheets:** fuente de productos, precios y stock.
 - **Outbox:** conserva las respuestas antes de enviarlas y permite reintentos.
-- **Usuarios y roles:** acceso al admin de Django y a las funciones administrativas.
+- **Panel de operadores:** `/whatsapp/`, con modo humano y envío manual (superusuario, administrador o empleado).
+- **Usuarios y roles:** acceso al admin de Django y al panel.
 
 ### Procesamiento y límites operativos
 

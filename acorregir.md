@@ -1,13 +1,13 @@
 # A corregir
 
-Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 238 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
+Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 263 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
 
 ## Hecho
 
 - **Marca y tipo del catálogo:** la hoja trae la marca real y 17 categorías en `Tipo`; `sync_inventory` carga 659 productos activos, con stock.
 - **Catálogo con un solo comando:** `sync_inventory` carga la hoja (`--dry-run` solo muestra la vista previa).
 - **Categorías sin tildes** (`inventory.py::category_products`): `categoría: serum` y `sérum` encuentran lo mismo.
-- **Chat web y panel eliminados:** ya no existen `views.py`, `Conversation`, `Message`, el dashboard ni el modo humano. Con ello desaparecieron los puntos antiguos sobre el límite de las conversaciones anónimas, los mensajes vacíos sin límite de frecuencia y el log de errores de la vista web.
+- **Chat web eliminado:** ya no existen las vistas web, `Conversation` ni `Message`. Con ello desaparecieron los puntos antiguos sobre el límite de las conversaciones anónimas, los mensajes vacíos sin límite de frecuencia y el log de errores de la vista web.
 - **`hasattr(history.model, 'role')`** (`services.py`): `latest_inventory_context` solo atiende el historial de WhatsApp.
 - **«hay 1 unidades»** (`responses.py`): con stock 1 y unidad «unidades» ahora dice «hay 1 unidad» (prueba `test_single_unit_is_singular`).
 - **IP detrás de un proxy** (`limits.py::client_address`): nuevo ajuste `TRUSTED_PROXY_COUNT` (0 por defecto). Con proxies propios delante de Django se toma la entrada correcta de `X-Forwarded-For`, contando desde la derecha; sin él se sigue usando solo `REMOTE_ADDR`. Ver `docs/usage-limits.md`.
@@ -19,6 +19,7 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 - **Búsqueda más rápida** (`inventory.py`): la consulta se procesa una vez y los términos de cada producto se guardan en memoria, renovados por `content_hash` tras `sync_inventory`. Con el catálogo real, unos 15 ms por búsqueda. (No hay ranking por relevancia: se conserva el orden por nombre.)
 - **Código duplicado y envoltorios:** `services.py` usa `normalize_text` de `inventory.py`; `inventory.py` ya no tiene `preview_inventory`/`sync_inventory` y el comando importa de `inventory_sync`.
 - **Listados cortados en 5 sin avisar** (`services.py`): ahora se busca entre todos los productos y, si hay más de los que se muestran, el bot lo dice («Hay 64 productos en total y te muestro 5. Si me dices la marca, el tipo o el tamaño, afino la búsqueda»). Ver `docs/inventory-search.md`.
+- **Panel de operadores** (`/whatsapp/`): conversaciones con estado de cada envío, salud del worker, colas, catálogo y consumo de IA, modo humano y envío manual, con actualización automática cada 5 s. Reintroduce `WhatsAppContact.mode` y `WhatsAppMessage.is_manual` (migración `0003`). Ver `docs/whatsapp-panel.md`.
 - **Pillow** quitado de `requirements.txt` (solo servía al panel).
 - **Documentación** reescrita para el bot solo de WhatsApp.
 
@@ -26,27 +27,25 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 
 1. **Siempre se llama a la IA, aunque no haga falta.** Con un solo producto la IA solo elige qué campos mostrar y se le envía el producto entero. Opcional: resolver sin IA preguntas simples («¿precio?», «¿stock?») con los campos por defecto y ahorrar cupo y latencia.
 2. **Mensajes no soportados sin respuesta.** El webhook descarta audio, ubicación, stickers y documentos sin contestar. Mejor responder «solo puedo leer texto e imágenes».
-3. **Sin panel ni modo humano.** No hay forma de intervenir en una conversación ni de reactivar un envío fallido desde la aplicación. Es una decisión de simplificación; documentarla o reconsiderarla según el uso real.
 
 ## Menores
 
-4. `providers.py::generate_response`: el chequeo de `OPENROUTER_API_KEY` está duplicado (también en `_openrouter`) y `return handler(prompt)` al final nunca se ejecuta (solo existe OpenRouter).
-5. `download_media_data` (`meta_api.py`) solo exige que la URL del medio empiece por `https://` y le envía el token de acceso. Restringir el dominio a los de Meta lo endurecería.
-6. Las tablas `UsageBucket` y `UsageLease` crecen con cada identidad: programar `cleanup_chat_limits`. Lo mismo con `cleanup_whatsapp_data`.
-7. Entrega «al menos una vez»: si el worker cae entre el envío a Meta y el registro (`_finish_outbox`), el bloqueo caduca y el mensaje se reenvía. Aceptable, pero documentado solo en `docs/arquitectura.md`.
-8. Los tests de `whatsapp` sobrescriben `WHATSAPP_DEFAULT_SOURCE`, un ajuste que ya no existe en `settings.py`; el `override_settings` no hace nada y se puede quitar.
-9. Código duplicado en `inventory_source.py`: `_available_stock` y `_availability` normalizan el valor de «Disponible» dos veces.
-10. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
-11. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
-12. El prompt a la IA incluye la `description` completa de cada producto (`services.py`). Con descripciones largas gasta más tokens de los necesarios; basta enviar los campos que la IA puede elegir.
-13. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
+3. `providers.py::generate_response`: el chequeo de `OPENROUTER_API_KEY` está duplicado (también en `_openrouter`) y `return handler(prompt)` al final nunca se ejecuta (solo existe OpenRouter).
+4. `download_media_data` (`meta_api.py`) solo exige que la URL del medio empiece por `https://` y le envía el token de acceso. Restringir el dominio a los de Meta lo endurecería.
+5. Las tablas `UsageBucket` y `UsageLease` crecen con cada identidad: programar `cleanup_chat_limits`. Lo mismo con `cleanup_whatsapp_data`.
+6. Entrega «al menos una vez»: si el worker cae entre el envío a Meta y el registro (`_finish_outbox`), el bloqueo caduca y el mensaje se reenvía. Aceptable, pero documentado solo en `docs/arquitectura.md`.
+7. Los tests de `whatsapp` sobrescriben `WHATSAPP_DEFAULT_SOURCE`, un ajuste que ya no existe en `settings.py`; el `override_settings` no hace nada y se puede quitar.
+8. Código duplicado en `inventory_source.py`: `_available_stock` y `_availability` normalizan el valor de «Disponible» dos veces.
+9. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
+10. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
+11. El prompt a la IA incluye la `description` completa de cada producto (`services.py`). Con descripciones largas gasta más tokens de los necesarios; basta enviar los campos que la IA puede elegir.
+12. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
 
 ## Orden sugerido
 
 1. Puntos 1 y 2 según prioridad (IA innecesaria, tipos de mensaje).
-2. Punto 3 es una decisión de diseño por revisar.
-3. Menores (4 a 13) cuando haya tiempo.
+2. Menores (3 a 12) cuando haya tiempo.
 
 ## Para activar lo nuevo
 
-La migración `whatsapp/0002_seguimiento_entrega` añade los campos de seguimiento al `Outbox`; hay que aplicarla con `python manage.py migrate`. Si hay un proxy delante de Django, define `TRUSTED_PROXY_COUNT` en el `.env`. En Meta, el webhook ya recibe los `statuses` con la suscripción al campo `messages`.
+Las migraciones `whatsapp/0002_seguimiento_entrega` (seguimiento de entrega en `Outbox`) y `whatsapp/0003_modo_humano_y_mensajes_manuales` (modo humano del panel) hay que aplicarlas con `python manage.py migrate`. Si hay un proxy delante de Django, define `TRUSTED_PROXY_COUNT` en el `.env`. En Meta, el webhook ya recibe los `statuses` con la suscripción al campo `messages`.

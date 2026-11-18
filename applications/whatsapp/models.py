@@ -7,6 +7,11 @@ from django.utils import timezone
 class WhatsAppContact(models.Model):
     phone_number = models.CharField(max_length=32, unique=True)
     display_name = models.CharField(max_length=255, blank=True)
+    AI = 'ai'
+    HUMAN = 'human'
+    MODE_CHOICES = ((AI, 'IA'), (HUMAN, 'Humano'))
+    # En modo humano el bot no responde; solo escribe un operador desde el panel.
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default=AI)
     last_message_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -43,6 +48,8 @@ class WhatsAppMessage(models.Model):
     media_id = models.CharField(max_length=255, blank=True)
     media_type = models.CharField(max_length=100, blank=True)
     is_from_customer = models.BooleanField(default=True)
+    # Mensaje escrito por un operador desde el panel (no lo generó el bot).
+    is_manual = models.BooleanField(default=False)
     response = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=RECEIVED, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)

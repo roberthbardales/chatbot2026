@@ -1,0 +1,370 @@
+{% extends 'base.html' %}
+
+{% block title %}Panel de WhatsApp{% endblock %}
+
+{% block content %}
+<input type="hidden" id="csrf-token" value="{{ csrf_token }}">
+
+<div class="mb-4 flex items-center justify-between">
+    <h1 class="text-2xl font-bold">Panel de WhatsApp</h1>
+    <span id="refresh-note" class="text-xs text-muted">Actualiza cada 5 s</span>
+</div>
+
+<div id="offline-banner" class="mb-4 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
+    No se pudo actualizar el panel. Reintentando…
+</div>
+
+<section id="status" class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Estado del sistema">
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p class="text-xs font-medium uppercase text-muted">Worker</p>
+        <p class="mt-1 flex items-center gap-2 text-lg font-semibold"><span id="worker-dot" class="inline-block h-3 w-3 rounded-full bg-gray-300"></span><span id="worker-state">…</span></p>
+        <p id="worker-detail" class="mt-1 text-xs text-muted"></p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p class="text-xs font-medium uppercase text-muted">Colas</p>
+        <p id="queues-main" class="mt-1 text-lg font-semibold">…</p>
+        <p id="queues-detail" class="mt-1 text-xs text-muted"></p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p class="text-xs font-medium uppercase text-muted">Catálogo</p>
+        <p id="catalog-main" class="mt-1 text-lg font-semibold">…</p>
+        <p id="catalog-detail" class="mt-1 text-xs text-muted"></p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p class="text-xs font-medium uppercase text-muted">IA hoy</p>
+        <p id="ai-main" class="mt-1 text-lg font-semibold">…</p>
+        <p id="ai-detail" class="mt-1 text-xs text-muted"></p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p class="text-xs font-medium uppercase text-muted">Atención humana</p>
+        <p id="human-main" class="mt-1 text-lg font-semibold">…</p>
+        <p class="mt-1 text-xs text-muted">contactos sin respuesta del bot</p>
+    </div>
+</section>
+
+<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <section class="rounded-xl border border-gray-200 bg-white shadow-sm lg:col-span-1" aria-label="Conversaciones">
+        <div class="border-b border-gray-200 p-3">
+            <input id="search" type="search" placeholder="Buscar por nombre o teléfono"
+                   class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+        </div>
+        <ul id="contacts" class="max-h-[32rem] divide-y divide-gray-100 overflow-y-auto"></ul>
+        <div class="border-t border-gray-100 p-2 text-center">
+            <button id="more" type="button" class="hidden text-sm text-blue-600 hover:underline">Ver más</button>
+            <p id="contacts-empty" class="hidden py-4 text-sm text-muted">Sin conversaciones.</p>
+        </div>
+    </section>
+
+    <section class="flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm lg:col-span-2" aria-label="Conversación">
+        <div id="chat-empty" class="flex h-[32rem] items-center justify-center p-6 text-sm text-muted">
+            Elige una conversación de la lista.
+        </div>
+
+        <div id="chat" class="hidden flex-col">
+            <header class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 p-3">
+                <div>
+                    <p id="chat-name" class="font-semibold"></p>
+                    <p id="chat-phone" class="text-xs text-muted"></p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="chat-mode" class="rounded-full px-3 py-1 text-xs font-semibold"></span>
+                    <button id="toggle-mode" type="button"
+                            class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100"></button>
+                </div>
+            </header>
+            <p id="mode-warning" class="hidden border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+            <div id="messages" class="h-[24rem] space-y-3 overflow-y-auto bg-slate-50 p-4" aria-live="polite"></div>
+
+            <form id="send-form" class="border-t border-gray-200 p-3">
+                <p id="send-error" class="mb-2 hidden text-sm text-red-600" role="alert"></p>
+                <div class="flex gap-2">
+                    <textarea id="send-text" rows="2" maxlength="4000" placeholder="Escribe un mensaje al cliente (Enter envía, Shift+Enter salto de línea)"
+                              class="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"></textarea>
+                    <button id="send-button" type="submit"
+                            class="self-end rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">Enviar</button>
+                </div>
+                <p class="mt-1 text-xs text-muted">«En cola» no significa «enviado»: el worker lo envía a Meta. Si el cliente no escribió en las últimas 24 h, Meta puede rechazarlo.</p>
+            </form>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    'use strict';
+    var REFRESH_MS = 5000;
+    var csrf = document.getElementById('csrf-token').value;
+    var state = {contactId: null, query: '', offset: 0, contacts: [], hasMore: false, mode: null, pendingOutbox: 0};
+    var timer = null;
+    var busy = false;
+
+    function $(id) { return document.getElementById(id); }
+
+    function make(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) { node.className = className; }
+        if (text !== undefined) { node.textContent = text; }
+        return node;
+    }
+
+    function api(url, options) {
+        options = options || {};
+        var headers = {'Accept': 'application/json'};
+        if (options.body) {
+            headers['Content-Type'] = 'application/json';
+            headers['X-CSRFToken'] = csrf;
+        }
+        return fetch(url, {method: options.method || 'GET', headers: headers, body: options.body, credentials: 'same-origin'})
+            .then(function (response) {
+                return response.json().catch(function () { return {}; }).then(function (data) {
+                    if (!response.ok) { throw new Error(data.error || ('Error ' + response.status)); }
+                    return data;
+                });
+            });
+    }
+
+    function formatDate(value) {
+        if (!value) { return '—'; }
+        return new Date(value).toLocaleString('es-PE', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+    }
+
+    // ---- Estado del sistema -------------------------------------------------------------
+    var WORKER_STATES = {
+        running: ['Activo', 'bg-green-500'], not_started: ['No iniciado', 'bg-gray-400'], stopped: ['Detenido', 'bg-gray-400'],
+        unresponsive: ['Sin latido', 'bg-red-500'], stalled: ['Sin progreso', 'bg-red-500'], degraded: ['Con errores', 'bg-amber-500']
+    };
+    var FRESHNESS = {current: 'al día', stale: 'desactualizado', unknown: 'sin sincronizar'};
+
+    function renderStatus(data) {
+        var worker = data.worker || {};
+        var info = WORKER_STATES[worker.state] || [worker.state || '—', 'bg-gray-400'];
+        $('worker-state').textContent = info[0];
+        $('worker-dot').className = 'inline-block h-3 w-3 rounded-full ' + info[1];
+        $('worker-detail').textContent = worker.last_error ? ('Último error: ' + worker.last_error)
+            : ('Último latido: ' + formatDate(worker.heartbeat_at));
+
+        var queues = data.queues || {};
+        var waiting = queues.incoming_pending + queues.incoming_processing;
+        $('queues-main').textContent = waiting + ' por responder · ' + queues.outbox_pending + ' por enviar';
+        $('queues-detail').textContent = queues.outbox_failed + ' envíos fallidos · ' + queues.incoming_failed + ' mensajes fallidos';
+
+        var catalog = data.catalog || {};
+        var products = catalog.products || {};
+        $('catalog-main').textContent = (products.active || 0) + ' / ' + (products.total || 0) + ' activos';
+        $('catalog-detail').textContent = (FRESHNESS[catalog.freshness] || '—') + ' · ' + formatDate(catalog.last_success_at);
+
+        var ai = data.ai || {};
+        $('ai-main').textContent = ai.requests_today + (ai.request_limit ? ' / ' + ai.request_limit : '') + ' consultas';
+        $('ai-detail').textContent = ai.reserved_tokens_today.toLocaleString('es-PE') + (ai.token_limit ? ' / ' + ai.token_limit.toLocaleString('es-PE') : '') + ' tokens reservados';
+
+        $('human-main').textContent = data.human_contacts;
+    }
+
+    // ---- Lista de conversaciones ---------------------------------------------------------
+    function renderContacts() {
+        var list = $('contacts');
+        list.textContent = '';
+        state.contacts.forEach(function (contact) {
+            var item = make('li');
+            var button = make('button', 'flex w-full items-center justify-between gap-2 px-3 py-3 text-left hover:bg-slate-50' +
+                (contact.id === state.contactId ? ' bg-blue-50' : ''));
+            button.type = 'button';
+            var left = make('div', 'min-w-0');
+            left.appendChild(make('p', 'truncate text-sm font-medium', contact.name || contact.phone));
+            left.appendChild(make('p', 'truncate text-xs text-muted', (contact.name ? contact.phone + ' · ' : '') + formatDate(contact.last_message_at)));
+            var right = make('div', 'flex shrink-0 items-center gap-1');
+            if (contact.mode === 'human') { right.appendChild(make('span', 'rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800', 'Humano')); }
+            if (contact.waiting) { right.appendChild(make('span', 'rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white', String(contact.waiting))); }
+            button.appendChild(left);
+            button.appendChild(right);
+            button.addEventListener('click', function () { selectContact(contact.id); });
+            item.appendChild(button);
+            list.appendChild(item);
+        });
+        $('contacts-empty').classList.toggle('hidden', state.contacts.length > 0);
+        $('more').classList.toggle('hidden', !state.hasMore);
+    }
+
+    function loadContacts(reset) {
+        // Al refrescar se recarga desde el principio hasta donde el usuario ya había llegado.
+        var pages = reset ? 1 : Math.max(1, Math.ceil(state.contacts.length / 50));
+        var collected = [];
+        var offset = 0;
+        function next() {
+            return api('api/conversations?q=' + encodeURIComponent(state.query) + '&offset=' + offset).then(function (data) {
+                collected = collected.concat(data.conversations);
+                state.hasMore = data.has_more;
+                pages -= 1;
+                if (pages > 0 && data.has_more) { offset = data.next_offset; return next(); }
+            });
+        }
+        return next().then(function () { state.contacts = collected; renderContacts(); });
+    }
+
+    function loadMore() {
+        return api('api/conversations?q=' + encodeURIComponent(state.query) + '&offset=' + state.contacts.length).then(function (data) {
+            state.contacts = state.contacts.concat(data.conversations);
+            state.hasMore = data.has_more;
+            renderContacts();
+        });
+    }
+
+    // ---- Conversación ---------------------------------------------------------------------
+    var DELIVERY = {queued: 'en cola', retrying: 'reintentando', sending: 'enviando', sent: 'enviado', delivered: 'entregado', read: 'leído', failed: 'falló'};
+
+    function deliveryText(delivery) {
+        if (!delivery) { return ''; }
+        var text = DELIVERY[delivery.state] || delivery.state;
+        if (delivery.parts > 1) { text += ' (' + delivery.accepted + '/' + delivery.parts + ' partes)'; }
+        if (delivery.error) { text += ': ' + delivery.error; }
+        return text;
+    }
+
+    function messageNode(message) {
+        var mine = message.sender !== 'customer';
+        var row = make('div', 'flex ' + (mine ? 'justify-end' : 'justify-start'));
+        var colors = message.sender === 'customer' ? 'bg-white border border-gray-200'
+            : message.sender === 'operator' ? 'bg-green-100 border border-green-200' : 'bg-blue-100 border border-blue-200';
+        var bubble = make('div', 'max-w-[85%] rounded-2xl px-3 py-2 text-sm ' + colors);
+        var label = message.sender === 'customer' ? '' : (message.sender === 'operator' ? 'Operador' : 'Bot');
+        if (label) { bubble.appendChild(make('p', 'mb-0.5 text-xs font-semibold text-muted', label)); }
+        if (message.has_image) { bubble.appendChild(make('p', 'italic text-muted', '[imagen]')); }
+        if (message.text) { bubble.appendChild(make('p', 'whitespace-pre-wrap break-words', message.text)); }
+        var meta = formatDate(message.created_at);
+        var failedStyle = false;
+        if (message.sender === 'customer') {
+            if (message.status === 'pending' || message.status === 'processing') { meta += ' · esperando respuesta'; }
+            if (message.status === 'failed') { meta += ' · no se pudo procesar'; failedStyle = true; }
+        } else {
+            var delivery = deliveryText(message.delivery);
+            if (delivery) { meta += ' · ' + delivery; }
+            failedStyle = !!(message.delivery && message.delivery.state === 'failed');
+        }
+        bubble.appendChild(make('p', 'mt-1 text-xs ' + (failedStyle ? 'text-red-600' : 'text-muted'), meta));
+        row.appendChild(bubble);
+        return row;
+    }
+
+    function renderConversation(data) {
+        var conversation = data.conversation;
+        state.mode = conversation.mode;
+        state.pendingOutbox = data.pending_outbox;
+        $('chat-name').textContent = conversation.name || conversation.phone;
+        $('chat-phone').textContent = conversation.phone;
+        var human = conversation.mode === 'human';
+        var badge = $('chat-mode');
+        badge.textContent = human ? 'Atiende una persona' : 'Atiende el bot';
+        badge.className = 'rounded-full px-3 py-1 text-xs font-semibold ' + (human ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800');
+        $('toggle-mode').textContent = human ? 'Devolver al bot' : 'Atender yo';
+        var warning = $('mode-warning');
+        if (human && state.pendingOutbox > 0) {
+            warning.textContent = 'Hay ' + state.pendingOutbox + ' envío(s) del bot ya en cola; se enviarán igual.';
+            warning.classList.remove('hidden');
+        } else if (human) {
+            warning.textContent = 'El bot no responderá a este contacto mientras esté en modo humano.';
+            warning.classList.remove('hidden');
+        } else {
+            warning.classList.add('hidden');
+        }
+
+        var box = $('messages');
+        var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+        var previousTop = box.scrollTop;
+        box.textContent = '';
+        data.messages.forEach(function (message) { box.appendChild(messageNode(message)); });
+        box.scrollTop = atBottom ? box.scrollHeight : previousTop;
+        $('chat-empty').classList.add('hidden');
+        $('chat').classList.remove('hidden');
+        $('chat').classList.add('flex');
+    }
+
+    function loadConversation() {
+        if (state.contactId === null) { return Promise.resolve(); }
+        return api('api/messages/' + state.contactId).then(renderConversation);
+    }
+
+    function selectContact(id) {
+        state.contactId = id;
+        $('send-error').classList.add('hidden');
+        renderContacts();
+        loadConversation().then(function () {
+            var box = $('messages');
+            box.scrollTop = box.scrollHeight;
+        }).catch(showError);
+    }
+
+    function toggleMode() {
+        var next = state.mode === 'human' ? 'ai' : 'human';
+        if (next === 'human' && !window.confirm('El bot dejará de responder a este contacto. ¿Atender tú?')) { return; }
+        api('api/mode/' + state.contactId, {method: 'POST', body: JSON.stringify({mode: next})})
+            .then(function () { return refresh(); })
+            .catch(showError);
+    }
+
+    function sendMessage(event) {
+        event.preventDefault();
+        var field = $('send-text');
+        var text = field.value.trim();
+        if (!text || state.contactId === null) { return; }
+        var button = $('send-button');
+        button.disabled = true;
+        api('api/messages/' + state.contactId + '/send', {method: 'POST', body: JSON.stringify({content: text})})
+            .then(function () {
+                field.value = '';
+                $('send-error').classList.add('hidden');
+                return loadConversation().then(function () { $('messages').scrollTop = $('messages').scrollHeight; });
+            })
+            .catch(function (error) {
+                var node = $('send-error');
+                node.textContent = error.message;
+                node.classList.remove('hidden');
+            })
+            .then(function () { button.disabled = false; });
+    }
+
+    function showError(error) {
+        var node = $('send-error');
+        node.textContent = error.message;
+        node.classList.remove('hidden');
+    }
+
+    // ---- Actualización automática ----------------------------------------------------------
+    function refresh() {
+        if (busy) { return Promise.resolve(); }
+        busy = true;
+        return Promise.all([api('api/status').then(renderStatus), loadContacts(false), loadConversation()])
+            .then(function () { $('offline-banner').classList.add('hidden'); })
+            .catch(function () { $('offline-banner').classList.remove('hidden'); })
+            .then(function () { busy = false; });
+    }
+
+    function schedule() {
+        window.clearInterval(timer);
+        timer = window.setInterval(function () { if (!document.hidden) { refresh(); } }, REFRESH_MS);
+    }
+
+    var searchTimer = null;
+    $('search').addEventListener('input', function (event) {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(function () {
+            state.query = event.target.value.trim();
+            state.contacts = [];
+            loadContacts(true).catch(function () {});
+        }, 300);
+    });
+    $('more').addEventListener('click', function () { loadMore().catch(function () {}); });
+    $('toggle-mode').addEventListener('click', toggleMode);
+    $('send-form').addEventListener('submit', sendMessage);
+    $('send-text').addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('send-form').requestSubmit(); }
+    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) { refresh(); } });
+
+    refresh();
+    schedule();
+}());
+</script>
+{% endblock %}

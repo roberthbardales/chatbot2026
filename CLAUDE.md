@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Documentación adicional en español: `README.md`, `arquitectura.md` (flujos) y la carpeta `docs/`: `inventory-sync.md`, `inventory-search.md`, `usage-limits.md`, `whatsapp-worker.md` (supervisión), `whatsapp-outbox.md`, `recovery-validation.md`.
+Documentación adicional en español: `README.md`, `arquitectura.md` (flujos) y la carpeta `docs/`: `inventory-sync.md`, `inventory-search.md`, `usage-limits.md`, `whatsapp-worker.md` (supervisión), `whatsapp-outbox.md`, `whatsapp-panel.md`, `recovery-validation.md`.
 
 ## Preparación y verificación
 
@@ -28,7 +28,7 @@ python manage.py test applications.core.tests.test_answers.InventoryConversation
 ```
 
 - No hay linter ni build frontend: la interfaz usa plantillas Django y Tailwind vía CDN en `templates/base.html`; reutiliza la plantilla base.
-- Las pruebas mockean integraciones externas con `unittest.mock.patch` y la configuración con `override_settings`. Están separadas por tema en la carpeta `tests/` de cada app: `applications/whatsapp/tests/` (`test_worker`, `test_recovery`, `test_housekeeping`, `test_processing`, `test_outbox`) y `applications/core/tests/` (`test_limits`, `test_inventory_sync`, `test_backup_restore`, `test_answers`, `test_search`, `test_search_units`, `test_availability`, `test_display`).
+- Las pruebas mockean integraciones externas con `unittest.mock.patch` y la configuración con `override_settings`. Están separadas por tema en la carpeta `tests/` de cada app: `applications/whatsapp/tests/` (`test_worker`, `test_recovery`, `test_housekeeping`, `test_processing`, `test_outbox`, `test_panel`, `test_human_mode`) y `applications/core/tests/` (`test_limits`, `test_inventory_sync`, `test_backup_restore`, `test_answers`, `test_search`, `test_search_units`, `test_availability`, `test_display`).
 - El ensayo real de respaldo (`test_backup_restore`) exige herramientas PostgreSQL de la misma versión mayor y una plantilla sin tablas de aplicación. Usa únicamente bases `test_*` y destinos nuevos `test_rehearsal_*`; no eleves privilegios ni restaures sobre la base habitual.
 
 ## Operaciones sensibles (no ejecutar como diagnóstico)
@@ -41,13 +41,13 @@ python manage.py test applications.core.tests.test_answers.InventoryConversation
 
 ## Arquitectura
 
-Aplicaciones en `applications/`: `core`, `whatsapp`, `users`, `home`. El producto es un bot de WhatsApp: ya no hay chat web ni panel.
+Aplicaciones en `applications/`: `core`, `whatsapp`, `users`, `home`. El producto es un bot de WhatsApp con un panel de operadores; ya no hay chat web.
 
 - **Core** (`applications/core`, motor sin vistas ni URLs): `services.py::answer_sheet_message` (búsqueda en el catálogo local + selección validada de la IA); `inventory.py` busca en el catálogo local; `inventory_source.py` lee y valida la hoja CSV; `inventory_sync.py` sincroniza (vista previa/aplicar); `responses.py` redacta y valida las respuestas; `providers.py` integra OpenRouter; `limits.py` aplica límites de uso y control de consumo de IA (modelos de uso en `models.py`; ver `docs/usage-limits.md`). OpenRouter y Google Sheets son las opciones predeterminadas activas.
 - **Fuente única**: el catálogo sale solo de la hoja de Google (`GOOGLE_SHEET_PRODUCTS_CSV_URL`), que puede ser el Excel subido tal cual: acepta `ID producto`/`SKU`, `Producto`, `Marca`, `Tipo`, `Precio`, `Stock` (o `Inventario`/`Existencias`), `Disponible`, `Precio anterior` y `URL` (ver `docs/inventory-sync.md`). Si hay `Stock`, la cantidad manda sobre `Disponible` (>0 disponible, 0 agotado); sin `Stock`, «No» equivale a stock 0 y «Sí» marca `Product.available` sin cifra. Las imágenes y demás columnas se ignoran. El blog, DummyJSON, los combos y los embeddings se eliminaron.
 - **WhatsApp** (`applications/whatsapp`): reutiliza los servicios de `core` vía `services.py`; `meta_api.py` habla con Meta. Arquitectura de cola: el webhook `/whatsapp/webhook/` valida el HMAC de Meta sobre el cuerpo original, deduplica y persiste antes de acusar recibo, sin descargar imágenes, llamar a IA ni enviar nada. Un worker independiente y obligatorio para responder (`whatsapp_worker`, `worker_runtime.py`) procesa mensajes y `Outbox` (`process_outbox()`); revisa las colas cada `WHATSAPP_WORKER_POLL_SECONDS` (2 s por defecto, `--poll-seconds`) y respeta debounce y límites. Recibir otro mensaje entrante ya no dispara el procesamiento. El worker no sincroniza inventario: cargar el catálogo (`sync_inventory`) es una operación separada. Supervisión en `docs/whatsapp-worker.md`.
-- **Sin panel ni modo humano**: el bot responde siempre; la salud del worker se consulta con `whatsapp_healthcheck`. «Encolado» (`Outbox`) ≠ «enviado».
-- **Acceso**: la única entrada pública de WhatsApp es el webhook firmado con HMAC. `users.User` autentica por correo, no por nombre de usuario; `users` reutiliza `core.limits` para limitar los intentos de login.
+- **Panel de operadores** (`/whatsapp/`, `views.py` + `panel.py` + `templates/whatsapp/dashboard.html`, ver `docs/whatsapp-panel.md`): conversaciones, estado de cada envío, salud del worker, colas, catálogo y consumo de IA. Permite el **modo humano** (`WhatsAppContact.mode`: el bot no responde ni consume cupo) y el envío manual, que solo crea entradas `Outbox` y no llama a Meta en esa petición. «Encolado» ≠ «enviado».
+- **Acceso**: el webhook firmado con HMAC es la única entrada pública de WhatsApp; el panel y su API exigen superusuario u ocupación `'0'` (admin) / `'2'` (empleado): iniciar sesión no basta, y las acciones llevan CSRF. `users.User` autentica por correo, no por nombre de usuario; `users` reutiliza `core.limits` para limitar los intentos de login.
 
 ## Reglas del inventario
 

@@ -11,6 +11,11 @@
                     <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="/">Inicio</a>
                 </li>
                 {% if request.user.is_authenticated %}
+                {% if request.user.occupation == '0' or request.user.occupation == '2' or request.user.is_superuser %}
+                <li>
+                    <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="{% url 'dashboard' %}">Panel WhatsApp</a>
+                </li>
+                {% endif %}
                 {% if request.user.occupation == '0' or request.user.is_superuser %}
                 <li>
                     <a class="px-3 py-2 text-sm font-medium text-[#0f172a] hover:text-[#2563eb]" href="{% url 'app_users:lista' %}">Usuarios</a>

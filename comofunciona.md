@@ -26,7 +26,7 @@ La regla que lo gobierna: **la IA nunca escribe precios ni stock**. Los producto
   WhatsApp: webhook → cola → worker → Outbox → Meta
 ```
 
-Son dos procesos que deben estar en marcha: el **servidor web** (Django, solo para el webhook y el login de usuarios) y el **worker** (`whatsapp_worker`). Sin el worker, WhatsApp recibe mensajes pero no responde. No hay panel ni chat web.
+Son dos procesos que deben estar en marcha: el **servidor web** (Django, solo para el webhook y el login de usuarios) y el **worker** (`whatsapp_worker`). Sin el worker, WhatsApp recibe mensajes pero no responde. El panel de operadores (`/whatsapp/`) usa el mismo servidor web. No hay chat web.
 
 ## 3. Paso 0: cómo entra el catálogo
 
@@ -70,10 +70,10 @@ El worker (`whatsapp_worker`) repite cada 2 segundos:
 1. **Recupera mensajes abandonados**: si un mensaje lleva más de 10 minutos en `processing` (el worker cayó), vuelve a `pending`. Tras 3 intentos pasa a `failed` y se encola un aviso de error al cliente.
 2. **Debounce**: espera 6 segundos desde el mensaje, por si el cliente escribe varias líneas seguidas.
 3. **Agrupa por contacto**: todos los mensajes pendientes de una misma persona se juntan en **una sola consulta** (los textos se unen con saltos de línea; si hubo imágenes se usa la última). Se «reclaman» con un token para que dos workers no procesen lo mismo.
-4. **Límite por contacto**: 20 consultas por minuto; si se excede, el mensaje se aplaza.
+4. **Modo humano**: si un operador atiende al contacto, el mensaje se guarda **sin responder**, sin llamar a la IA ni consumir límites. Después, el **límite por contacto**: 20 consultas por minuto; si se excede, el mensaje se aplaza.
 5. **Imagen**: si hay una, se descarga de Meta (tope de tamaño configurable) y se pasa a la IA como dato en memoria. **No se guarda**.
 6. **Respuesta**: `answer_sheet_message` (sección 5), usando el historial del contacto como contexto.
-7. **Cierre**: se comprueba, bajo bloqueo, que el intento sigue siendo dueño de los mensajes. Si es así, se guarda la respuesta del asistente y se crea el `Outbox`.
+7. **Cierre**: se comprueba, bajo bloqueo, que el intento sigue siendo dueño de los mensajes y que el contacto no pasó a modo humano mientras tanto (en ese caso la respuesta se descarta). Si es así, se guarda la respuesta del asistente y se crea el `Outbox`.
 
 Entre un contacto y el siguiente, el worker **ejecuta también la fase de salida**, para que las respuestas ya listas no esperen a toda la tanda.
 
@@ -152,14 +152,25 @@ El servidor rechaza cualquier otra cosa: claves extra, SKU que no estaba entre l
 | Meta rechaza el envío | Reintentos con espera creciente; si es permanente, la parte falla y queda en `Outbox.last_error` |
 | El worker se cae a mitad | El mensaje se recupera a los 10 minutos; tras 3 intentos fallidos se avisa al cliente |
 
-## 8. Límites y seguridad
+## 8. Panel de operadores
+
+En `/whatsapp/` (superusuario, administrador o empleado) hay un panel que se actualiza solo cada 5 segundos:
+
+- **Conversaciones**: lista de contactos con búsqueda e historial, indicando quién escribió cada mensaje (cliente, bot u operador) y su estado de envío (en cola, enviado, entregado, leído, fallido con el motivo de Meta).
+- **Modo humano**: «Atender yo» silencia al bot en ese contacto; «Devolver al bot» lo reactiva. No cancela lo que ya estaba en la cola de salida.
+- **Envío manual**: crea una entrada en `Outbox`; el worker la envía.
+- **Estado del sistema**: salud del worker, colas, catálogo y consumo de IA del día.
+
+Detalle en [docs/whatsapp-panel.md](docs/whatsapp-panel.md).
+
+## 9. Límites y seguridad
 
 - **Frecuencia y concurrencia** por contacto; **cupo diario de IA** (1000 peticiones y 2 000 000 de tokens *reservados* por defecto; son reservas locales, no facturación). Todo se guarda en PostgreSQL, sin Redis. Login y registro de usuarios tienen sus propios límites por correo e IP.
 - **Webhook** protegido por token de verificación (obligatorio) y firma HMAC.
 - **Privacidad**: los teléfonos aparecen enmascarados en los logs (`***1234`); las imágenes de clientes solo viven en memoria; las credenciales van por variables de entorno.
 - **Producción**: con `DEBUG=False` se fuerza HTTPS y cookies seguras.
 
-## 9. Qué debe estar corriendo y cómo comprobarlo
+## 10. Qué debe estar corriendo y cómo comprobarlo
 
 ```powershell
 python manage.py runserver                 # servidor web (webhook)
@@ -174,14 +185,14 @@ python manage.py whatsapp_healthcheck      # worker vivo y progresando
 
 Mantenimiento: `cleanup_chat_limits` y `cleanup_whatsapp_data` (con `--dry-run` solo cuenta).
 
-## 10. Límites conocidos
+## 11. Límites conocidos
 
 - La búsqueda exige que **todos** los términos coincidan: un adjetivo que el producto no tenga anula el resultado.
 - Los listados muestran hasta 5 productos (`MAX_PRODUCTS_IN_CONTEXT`); si hay más, el bot lo avisa («Hay 64 productos en total y te muestro 5…»), pero la opción 6 en adelante solo se alcanza afinando la búsqueda con marca, tipo o tamaño.
 - De varias imágenes en un grupo de mensajes solo se analiza la última.
-- No hay panel ni modo humano: el bot responde siempre y no hay forma de intervenir desde la aplicación.
+- Un mensaje manual del operador solo se encola; Meta puede rechazarlo si el cliente no escribió en las últimas 24 h (el panel muestra el motivo).
 - No hay sincronización automática del catálogo: depende del comando manual.
 
 ## Más información
 
-[docs/arquitectura.md](docs/arquitectura.md) · [docs/inventory-sync.md](docs/inventory-sync.md) · [docs/inventory-search.md](docs/inventory-search.md) · [docs/usage-limits.md](docs/usage-limits.md) · [docs/whatsapp-worker.md](docs/whatsapp-worker.md) · [docs/whatsapp-outbox.md](docs/whatsapp-outbox.md)
+[docs/arquitectura.md](docs/arquitectura.md) · [docs/inventory-sync.md](docs/inventory-sync.md) · [docs/inventory-search.md](docs/inventory-search.md) · [docs/usage-limits.md](docs/usage-limits.md) · [docs/whatsapp-worker.md](docs/whatsapp-worker.md) · [docs/whatsapp-outbox.md](docs/whatsapp-outbox.md) · [docs/whatsapp-panel.md](docs/whatsapp-panel.md)

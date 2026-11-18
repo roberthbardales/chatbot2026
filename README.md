@@ -8,6 +8,7 @@ Aplicación Django para gestión de usuarios y atención automatizada de WhatsAp
 - Consulta productos, precios y stock del catálogo local sincronizado desde Google Sheets.
 - Analiza imágenes recibidas por WhatsApp y busca coincidencias reales del inventario; requiere un modelo de OpenRouter compatible con imágenes.
 - Conserva el historial de cada contacto para recordar el producto elegido.
+- Panel web para ver las conversaciones, tomar el control de un contacto (modo humano) y vigilar el sistema.
 - Utiliza Python, Django 6.1.3, PostgreSQL y plantillas con Tailwind Play CDN; no requiere compilación frontend.
 
 Para los flujos y diagramas, consulta [arquitectura.md](arquitectura.md). Para estructura del código, configuración y detalles técnicos, consulta [contexto.md](contexto.md).
@@ -100,8 +101,12 @@ filas; usa `--dry-run` para solo mirar). No ejecutes el worker ni sincronices
 como diagnóstico de solo lectura. Para comprobar el worker sin enviar mensajes,
 usa `python manage.py whatsapp_healthcheck`.
 
-No hay panel web: la salud del worker se comprueba con
-`python manage.py whatsapp_healthcheck`. Consulta
+El panel de operadores está en `/whatsapp/` (superusuario, administrador o empleado):
+muestra conversaciones, el estado de cada envío, la salud del worker, las colas, el
+catálogo y el consumo de IA, y permite pasar un contacto a modo humano y escribirle.
+El envío manual solo encola: el worker debe estar activo para enviarlo a Meta. La salud
+del worker también se comprueba con `python manage.py whatsapp_healthcheck`. Consulta
+`docs/whatsapp-panel.md` y
 `docs/whatsapp-worker.md` para configurar arranque, reinicio y monitorización en
 Windows o Linux. Sin worker, los mensajes quedan pendientes aunque lleguen otros.
 Gemini, Groq, DummyJSON y el RAG vectorial se eliminaron. El inventario

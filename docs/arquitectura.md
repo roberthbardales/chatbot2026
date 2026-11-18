@@ -4,7 +4,7 @@ Revisión del código: 2026-11-17. Describe lo que hace el código actual, no ce
 
 ## 1. Visión general
 
-Bot de atención al cliente por **WhatsApp** (Meta Cloud API) para un catálogo de productos. Responde consultas de precio, stock y características. Es asíncrono: colas en PostgreSQL y un worker independiente. No hay chat web ni panel de administración de WhatsApp.
+Bot de atención al cliente por **WhatsApp** (Meta Cloud API) para un catálogo de productos. Responde consultas de precio, stock y características. Es asíncrono: colas en PostgreSQL y un worker independiente. Un panel de operadores (`/whatsapp/`) permite ver conversaciones, atender un contacto a mano y vigilar el sistema. No hay chat web.
 
 Principio rector: **la IA nunca inventa datos comerciales**. Los productos se buscan textualmente en un catálogo local; la IA solo elige *qué* SKU y *qué* campos mostrar, y el servidor redacta la respuesta con los valores del inventario.
 
@@ -58,12 +58,13 @@ Modelos: `Product`, `UsageBucket`, `UsageLease`, `AIUsageDay`, `InventorySyncLoc
 
 | Módulo | Función |
 | --- | --- |
-| `views.py` | Webhook (GET verificación, POST firmado). Es la única vista. |
+| `views.py` | Webhook (GET verificación, POST firmado) y vistas del panel (`manager_required`). |
+| `panel.py` | Datos del panel en JSON: estado del sistema, contactos, mensajes y estado de entrega. |
 | `services.py` | `enqueue_message`, `process_pending_messages`, `enqueue_outbox`, `process_outbox`, recuperación de mensajes abandonados. |
 | `meta_api.py` | `send_text_message` y `download_media_data` contra Graph API; clasifica errores reintentables. |
 | `worker_runtime.py`, `health.py` | Latido en hilo aparte y diagnóstico (`running`, `stalled`, `unresponsive`, `degraded`, `stopped`, `not_started`). |
 
-Modelos: `WhatsAppContact`, `WhatsAppMessage`, `Outbox`, `WorkerHeartbeat`. Comandos: `whatsapp_worker`, `whatsapp_healthcheck`, `cleanup_whatsapp_data`.
+Modelos: `WhatsAppContact` (con `mode`), `WhatsAppMessage` (con `is_manual`), `Outbox`, `WorkerHeartbeat`. Comandos: `whatsapp_worker`, `whatsapp_healthcheck`, `cleanup_whatsapp_data`.
 
 ## 4. Flujos principales
 
@@ -136,14 +137,14 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 ## 7. Operación y despliegue
 
 - **Procesos**: servidor web (WSGI, para el webhook) + `whatsapp_worker` obligatorio para responder. Plantillas en `deploy/systemd/` (servicio del worker y temporizador de salud) y `deploy/windows/` (tareas programadas).
-- **Salud**: el latido se actualiza en un hilo propio; el progreso, en el bucle principal, de modo que un bucle colgado se distingue de un proceso muerto. `whatsapp_healthcheck` falla si no hay latido/progreso o hay errores. No hay panel: la salud se consulta solo con este comando.
+- **Salud**: el latido se actualiza en un hilo propio; el progreso, en el bucle principal, de modo que un bucle colgado se distingue de un proceso muerto. `whatsapp_healthcheck` falla si no hay latido/progreso o hay errores. El panel muestra el mismo diagnóstico.
 - **Comandos de solo lectura**: `whatsapp_healthcheck`, `sync_inventory --dry-run`.
 - **Comandos sensibles**: `whatsapp_worker --once` (envía mensajes reales), `sync_inventory`, `cleanup_chat_limits` (borra registros caducados), `cleanup_whatsapp_data` (borra latidos antiguos).
 - **Respaldo**: `deploy/predeploy_backup.py` y ensayo en `core/tests/test_backup_restore`; ver [recovery-validation.md](recovery-validation.md).
 
 ## 8. Pruebas
 
-`python manage.py test` ejecuta toda la suite con PostgreSQL. Las integraciones externas se simulan con `unittest.mock.patch`. Módulos por tema en `applications/<app>/tests/`: `core` (`test_limits`, `test_inventory_sync`, `test_backup_restore`, `test_answers`, `test_search`…) y `whatsapp` (`test_worker`, `test_recovery`, `test_housekeeping`, `test_processing`, `test_outbox`).
+`python manage.py test` ejecuta toda la suite con PostgreSQL. Las integraciones externas se simulan con `unittest.mock.patch`. Módulos por tema en `applications/<app>/tests/`: `core` (`test_limits`, `test_inventory_sync`, `test_backup_restore`, `test_answers`, `test_search`…) y `whatsapp` (`test_worker`, `test_recovery`, `test_housekeeping`, `test_processing`, `test_outbox`, `test_panel`, `test_human_mode`).
 
 ## 9. Decisiones y límites conocidos
 
@@ -151,7 +152,7 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 - **Cola en PostgreSQL**: sin broker adicional; el rendimiento depende del sondeo (2 s) y de `WHATSAPP_WORKER_MAX_CONTACTS`.
 - **Un solo proveedor de IA** (OpenRouter).
 - **Sincronización manual**: no hay sincronización automática; el catálogo puede quedar desactualizado (`stale`).
-- **Sin panel ni modo humano**: el bot responde siempre; no se puede intervenir ni reactivar envíos desde la aplicación.
+- **Modo humano**: un operador puede silenciar al bot por contacto y escribir desde el panel; no se pueden reactivar envíos fallidos desde la aplicación.
 - **Entrega al menos una vez**: si Meta acepta el envío y la base de datos falla antes de registrarlo, puede haber un duplicado.
 - Los límites de IA son reservas locales, no consumo real facturado.
 - **Orden de envío**: se garantiza dentro de un grupo (partes de una misma respuesta); entre grupos distintos, un envío en reintento no bloquea otros mensajes del mismo contacto (ver [whatsapp-outbox.md](whatsapp-outbox.md)).
@@ -159,4 +160,4 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 
 ## 10. Documentos relacionados
 
-[inventory-sync.md](inventory-sync.md) · [inventory-search.md](inventory-search.md) · [usage-limits.md](usage-limits.md) · [whatsapp-worker.md](whatsapp-worker.md) · [whatsapp-outbox.md](whatsapp-outbox.md) · [recovery-validation.md](recovery-validation.md)
+[inventory-sync.md](inventory-sync.md) · [inventory-search.md](inventory-search.md) · [usage-limits.md](usage-limits.md) · [whatsapp-worker.md](whatsapp-worker.md) · [whatsapp-outbox.md](whatsapp-outbox.md) · [whatsapp-panel.md](whatsapp-panel.md) · [recovery-validation.md](recovery-validation.md)

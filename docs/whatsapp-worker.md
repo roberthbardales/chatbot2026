@@ -48,7 +48,7 @@ Cada proceso registra un `WorkerHeartbeat` con identificador propio:
 
 Un latido reciente no oculta un bucle atascado. `worker_health()` distingue los
 estados: activo, detenido, no iniciado, sin latido, sin progreso y con errores;
-se consulta con `whatsapp_healthcheck` (no hay panel web).
+se consulta con `whatsapp_healthcheck` y se muestra en el panel de `/whatsapp/`.
 
 Comprobación de solo lectura:
 

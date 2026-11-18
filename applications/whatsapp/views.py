@@ -2,13 +2,20 @@ import hashlib
 import hmac
 import json
 import logging
+from functools import wraps
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .services import enqueue_message, record_delivery_status
+from . import panel
+from .models import WhatsAppContact
+from .services import create_manual_message, enqueue_message, record_delivery_status
 
 
 logger = logging.getLogger(__name__)
@@ -108,3 +115,84 @@ def webhook(request):
         logger.exception('WhatsApp message queueing failed')
         return JsonResponse({'error': 'Message queueing failed'}, status=500)
     return JsonResponse({'status': 'ok'})
+
+
+# --- Panel de operadores ---------------------------------------------------------------------
+# Solo superusuario, administrador o empleado: iniciar sesión no basta.
+
+MAX_MANUAL_LENGTH = 4000
+
+
+def manager_required(view):
+    @wraps(view)
+    @login_required
+    @never_cache
+    def wrapper(request, *args, **kwargs):
+        if not panel.can_manage(request.user):
+            raise PermissionDenied
+        return view(request, *args, **kwargs)
+    return wrapper
+
+
+def _json_body(request):
+    try:
+        data = json.loads(request.body.decode('utf-8') or '{}')
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+@manager_required
+def dashboard(request):
+    return render(request, 'whatsapp/dashboard.html')
+
+
+@manager_required
+def system_status(request):
+    return JsonResponse(panel.system_status())
+
+
+@manager_required
+def conversations(request):
+    try:
+        offset = int(request.GET.get('offset', '0'))
+        if not 0 <= offset <= 1_000_000:
+            raise ValueError
+    except ValueError:
+        return JsonResponse({'error': 'Paginación inválida.'}, status=400)
+    return JsonResponse(panel.conversations_page(request.GET.get('q', '').strip()[:120], offset))
+
+
+@manager_required
+def conversation_messages(request, contact_id):
+    contact = get_object_or_404(WhatsAppContact, pk=contact_id)
+    return JsonResponse(panel.conversation_payload(contact))
+
+
+@manager_required
+@require_http_methods(['POST'])
+def change_mode(request, contact_id):
+    contact = get_object_or_404(WhatsAppContact, pk=contact_id)
+    data = _json_body(request)
+    mode = data.get('mode') if data is not None else None
+    if not isinstance(mode, str) or mode not in {WhatsAppContact.AI, WhatsAppContact.HUMAN}:
+        return JsonResponse({'error': 'Modo inválido.'}, status=400)
+    contact.mode = mode
+    contact.save(update_fields=('mode', 'updated_at'))
+    logger.warning('WhatsApp mode changed: actor_id=%s contact_id=%s mode=%s', request.user.pk, contact.pk, mode)
+    return JsonResponse({'mode': contact.mode})
+
+
+@manager_required
+@require_http_methods(['POST'])
+def send_manual_message(request, contact_id):
+    contact = get_object_or_404(WhatsAppContact, pk=contact_id)
+    data = _json_body(request)
+    text = data.get('content') if data is not None else None
+    if not isinstance(text, str) or not text.strip():
+        return JsonResponse({'error': 'Escribe el mensaje.'}, status=400)
+    text = text.strip()
+    if len(text) > MAX_MANUAL_LENGTH:
+        return JsonResponse({'error': f'El mensaje no puede superar {MAX_MANUAL_LENGTH} caracteres.'}, status=400)
+    message = create_manual_message(contact, text)
+    return JsonResponse({'queued': True, 'message_id': message.id})

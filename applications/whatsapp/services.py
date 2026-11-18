@@ -102,6 +102,19 @@ def enqueue_outbox(contact, message, content):
         ) for index, part in enumerate(split_whatsapp_text(content), 1)]
 
 
+def create_manual_message(contact, text):
+    """Mensaje de un operador: se guarda en el historial y se encola en el Outbox (no llama a Meta)."""
+    now = timezone.now()
+    with transaction.atomic():
+        message = WhatsAppMessage.objects.create(
+            contact=contact, message_id=f'local-{uuid.uuid4()}', text=text, response=text,
+            status=WhatsAppMessage.PROCESSED, is_from_customer=False, is_manual=True, processed_at=now,
+        )
+        enqueue_outbox(contact, message, text)
+        WhatsAppContact.objects.filter(pk=contact.pk).update(last_message_at=now, updated_at=now)
+    return message
+
+
 def _recover_abandoned_messages(progress_callback=None):
     now = timezone.now()
     cutoff = now - timedelta(seconds=max(1, settings.WHATSAPP_PROCESSING_TIMEOUT_SECONDS))
@@ -145,6 +158,10 @@ def _finish_processing(messages, token, response=None, failed=False):
         ).order_by('id'))
         if len(owned) != len(messages):
             return False
+        if contact.mode == WhatsAppContact.HUMAN:
+            # Un operador tomó el control mientras se procesaba: no se responde ni se avisa del error.
+            response = None
+            failed = False
         WhatsAppMessage.objects.filter(pk__in=[item.pk for item in owned]).update(
             status=WhatsAppMessage.FAILED if failed else WhatsAppMessage.PROCESSED,
             response=response or '', processed_at=timezone.now(),
@@ -175,6 +192,10 @@ def _defer_processing(messages, token, retry_after):
             processing_attempts=models.F('processing_attempts') - 1,
         )
     return True
+
+
+def _human_mode(contact_pk):
+    return WhatsAppContact.objects.filter(pk=contact_pk, mode=WhatsAppContact.HUMAN).exists()
 
 
 def process_pending_messages(force=False, max_contacts=None, progress_callback=None, after_contact=None):
@@ -215,6 +236,10 @@ def process_pending_messages(force=False, max_contacts=None, progress_callback=N
         messages = claimable
         if not messages:
             continue
+        if _human_mode(message.contact_id):
+            # En modo humano el bot no responde ni consume frecuencia: el mensaje solo queda registrado.
+            count += int(_finish_processing(messages, token))
+            continue
         try:
             enforce_rates([(identity('whatsapp', message.contact.phone_number), settings.WHATSAPP_RATE_PER_CONTACT)])
         except LimitExceeded as exc:
@@ -230,6 +255,10 @@ def process_pending_messages(force=False, max_contacts=None, progress_callback=N
                 logger.exception('Could not download WhatsApp media for %s', _masked_phone(message.contact.phone_number))
                 count += int(_finish_processing(messages, token, PROCESSING_ERROR, failed=True))
                 continue
+        # El modo pudo cambiar mientras se descargaba la imagen.
+        if _human_mode(message.contact_id):
+            count += int(_finish_processing(messages, token))
+            continue
         try:
             with principal_slot(identity('whatsapp', message.contact.phone_number)):
                 conversation = SimpleNamespace(
