@@ -45,7 +45,7 @@ WhatsApp ─► webhook ─► cola ─► worker whatsapp_worker ─► answer_
 | Módulo | Función |
 | --- | --- |
 | `services.py` | `answer_sheet_message`: orquesta SKU explícito, elección de candidatos previos, categoría, búsqueda, imagen y selección por IA. `latest_inventory_context` lee el contexto del historial de un contacto. |
-| `inventory.py` | Búsqueda textual sobre `Product` activos: normalización, sinónimos, dimensiones (fracciones, mm, pulgadas), puntaje por inclusión de términos. |
+| `inventory.py` | Búsqueda textual sobre `Product` activos: normalización, sinónimos español/inglés, unidades de contenido neto (ml, g…), coincidencia por inclusión de todos los términos y caché en memoria de los términos de cada producto. |
 | `inventory_source.py` | Descarga y valida el CSV (alias de cabeceras, `Decimal`, límites de tamaño/filas). |
 | `inventory_sync.py` | Vista previa y aplicación con bloqueo y auditoría (`InventorySyncRun`). |
 | `responses.py` | `InventoryAnswer` (texto + `inventory_context`), validación estricta del JSON de la IA y redacción con valores del inventario. |

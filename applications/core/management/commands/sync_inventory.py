@@ -2,8 +2,8 @@ import json
 
 from django.core.management.base import BaseCommand, CommandError
 
-from applications.core.inventory import InventoryError, preview_inventory, sync_inventory
-from applications.core.inventory_sync import inventory_status
+from applications.core.inventory_source import InventoryError
+from applications.core.inventory_sync import apply_inventory, inventory_status, preview_inventory
 
 
 class Command(BaseCommand):
@@ -25,7 +25,7 @@ class Command(BaseCommand):
                 summary = preview_inventory().summary
                 status = 'preview'
             else:
-                summary = sync_inventory(allow_large_drop=options['allow_large_drop']).summary
+                summary = apply_inventory(allow_large_drop=options['allow_large_drop']).summary
                 status = 'applied'
         except InventoryError as exc:
             raise CommandError(str(exc)) from exc

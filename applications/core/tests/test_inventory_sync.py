@@ -12,9 +12,9 @@ from django.db import close_old_connections
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from ..inventory import preview_inventory, product_by_sku, sync_inventory
+from ..inventory import product_by_sku
 from ..inventory_source import InventoryError, _decimal, _download_rows, _integer
-from ..inventory_sync import inventory_status
+from ..inventory_sync import apply_inventory as sync_inventory, inventory_status, preview_inventory
 from ..models import InventorySyncLock, InventorySyncRun, Product
 
 

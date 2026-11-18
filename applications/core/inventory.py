@@ -1,24 +1,14 @@
 """Consulta de productos en el catálogo local sincronizado."""
 import re
 import unicodedata
-from fractions import Fraction
 
-from .inventory_source import InventoryError  # noqa: F401  (reexportado para los comandos)
 from .models import Product
 
 
-def preview_inventory():
-    from .inventory_sync import preview_inventory as preview
-    return preview()
-
-
-def sync_inventory(*, allow_large_drop=False):
-    from .inventory_sync import apply_inventory
-    return apply_inventory(allow_large_drop=allow_large_drop)
-
-
-def _normalize(value):
-    value = unicodedata.normalize('NFKD', value or '')
+def normalize_text(value):
+    """Minúsculas, sin tildes ni apóstrofes; solo letras y dígitos separados por espacios."""
+    value = (value or '').replace("'", '').replace('’', '')
+    value = unicodedata.normalize('NFKD', value)
     value = ''.join(char for char in value if not unicodedata.combining(char))
     return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
 
@@ -32,13 +22,25 @@ _SEARCH_STOP_WORDS = set('''a al algo buscar busca busco buscarme necesito neces
     indicame indica confirmo correcto correcta primera primero segunda segundo tercera tercero
     opcion opciones numero sku codigo referencia marca marcas modelo modelos categoria categorias
     descripcion caracteristicas material materiales esto ahora tambien otro otra otros otras'''.split())
+# Palabra que escribe el cliente -> término del catálogo. Se aplica por igual a la consulta y a
+# los textos de los productos, así que basta con que ambos lados converjan al mismo término.
 _SEARCH_SYNONYMS = {
-    'valvulas': 'valvula', 'valve': 'valvula', 'valves': 'valvula',
-    'tuberia': 'tubo', 'tuberias': 'tubo', 'tubos': 'tubo',
-    'codos': 'codo', 'elbow': 'codo', 'elbows': 'codo',
-    'acoples': 'acople', 'acoplamiento': 'acople', 'acoplamientos': 'acople',
-    'adaptadores': 'adaptador', 'conectores': 'conector',
-    'inox': 'inoxidable', 'bronze': 'bronce',
+    # Protector solar
+    'bloqueador': 'protector', 'sunblock': 'protector', 'sunscreen': 'protector',
+    # Limpieza y cuidado facial
+    'cleanser': 'limpiador', 'cleansing': 'limpiador', 'limpiadores': 'limpiador',
+    'cream': 'crema', 'cremas': 'crema', 'moisturizer': 'hidratante',
+    'toner': 'tonico', 'mist': 'bruma',
+    'mask': 'mascarilla', 'mascarillas': 'mascarilla',
+    'serums': 'serum', 'ampoule': 'ampolla', 'ampollas': 'ampolla',
+    'patch': 'parches', 'patches': 'parches',
+    'scrub': 'exfoliante', 'peeling': 'exfoliante',
+    'eye': 'ojos', 'lip': 'labios', 'labial': 'labios', 'labiales': 'labios',
+    'champu': 'shampoo',
+    # Maquillaje
+    'powder': 'polvo', 'blush': 'rubor', 'concealer': 'corrector', 'eyeliner': 'delineador',
+    # El catálogo usa más la palabra en inglés
+    'aceite': 'oil', 'espuma': 'foam', 'esencia': 'essence',
 }
 
 
@@ -53,36 +55,13 @@ _CONTENT_UNITS = {
 
 
 def search_terms(value):
-    """Conservative lexical aliases; preserve dimensions, units and connection types."""
-    value = value.lower().replace('⁄', '/')
-    for glyph, fraction in {'½': '1/2', '¼': '1/4', '¾': '3/4', '⅜': '3/8', '⅝': '5/8', '⅛': '1/8'}.items():
-        value = re.sub(r'(\d)?' + glyph, lambda match: (match.group(1) + ' ' if match.group(1) else '') + fraction, value)
-    value = unicodedata.normalize('NFKD', value)
+    """Términos de búsqueda normalizados: sin tildes, sin palabras vacías, con unidades y sinónimos unificados."""
+    value = unicodedata.normalize('NFKD', value.lower())
     value = ''.join(char for char in value if not unicodedata.combining(char))
-    for phrase, replacement in {'media pulgada': '1/2 pulgada', 'medio pulgada': '1/2 pulgada',
-                                'un cuarto de pulgada': '1/4 pulgada', 'tres cuartos de pulgada': '3/4 pulgada',
-                                'llave de paso': 'valvula'}.items():
-        value = value.replace(phrase, replacement)
-
-    def dimension(match):
-        number = match.group('number').replace(',', '.')
-        unit = match.groupdict().get('unit') or 'pulgada'
-        try:
-            parts = number.split()
-            amount = sum((Fraction(part) for part in parts), Fraction(0))
-        except (ValueError, ZeroDivisionError):
-            return match.group(0)
-        unit = 'mm' if unit.startswith(('mm', 'milimetro')) else 'inch'
-        return f' dim_{unit}_{amount.numerator}_{amount.denominator} '
-
-    number = r'\d+(?:\s+\d+/\d+|/\d+|[.,]\d+)?'
-    value = re.sub(r'(?<![\w/])(?P<number>' + number + r')\s*(?P<unit>milimetros?\b|mm\b|pulgadas?\b|inches\b|inch\b|in\b|["″])', dimension, value)
-    # A bare fraction is the usual inch notation in this industrial catalog.
-    value = re.sub(r'(?<![\w/])(?P<number>\d+(?:\s+\d+/\d+|/\d+))(?![\w/])', dimension, value)
-    # Net content: "500 ml", "500ml" and "500 mililitros" are the same term (also inside product names).
+    # Contenido neto: "500 ml", "500ml" y "500 mililitros" son el mismo término (también dentro de los nombres).
     value = re.sub(r'(?<![\w/])(\d+(?:[.,]\d+)?)\s*(' + '|'.join(sorted(_CONTENT_UNITS, key=len, reverse=True)) + r')\b',
                    lambda match: match.group(1) + _CONTENT_UNITS[match.group(2)], value)
-    # Brands written with dotted initials ("e.l.f.") are one word.
+    # Marcas escritas con iniciales con puntos ("e.l.f.") son una sola palabra.
     value = re.sub(r'(?<![a-z0-9])[a-z](?:\.[a-z])+\.?(?![a-z0-9])', lambda match: match.group(0).replace('.', ''), value)
     tokens = re.findall(r'[a-z0-9_]+', value)
     return {_SEARCH_SYNONYMS.get(token, token) for token in tokens if token not in _SEARCH_STOP_WORDS}
@@ -107,22 +86,43 @@ def _as_dict(product):
     }
 
 
-def _score(query, product):
-    query_tokens = search_terms(query)
-    haystack_tokens = search_terms(' '.join((product.name, product.sku, product.brand, product.model,
-                                           product.keywords, product.category, product.specs)))
-    return len(query_tokens) if query_tokens and query_tokens.issubset(haystack_tokens) else 0
+# Términos de búsqueda de cada producto, en memoria por proceso. La clave incluye `content_hash`,
+# que cambia cuando cambia cualquier campo del producto, así que `sync_inventory` los renueva solo.
+_PRODUCT_TERMS = {}
+
+
+def _product_terms(product):
+    cached = _PRODUCT_TERMS.get(product.pk)
+    if cached and cached[0] == product.content_hash:
+        return cached[1]
+    terms = search_terms(' '.join((product.name, product.sku, product.brand, product.model,
+                                   product.keywords, product.category, product.specs)))
+    _PRODUCT_TERMS[product.pk] = (product.content_hash, terms)
+    return terms
+
+
+def _forget_inactive_terms(active):
+    current = {product.pk for product in active}
+    for pk in [pk for pk in _PRODUCT_TERMS if pk not in current]:
+        _PRODUCT_TERMS.pop(pk, None)
 
 
 def search_products(query, limit=6):
     active = list(Product.objects.filter(active=True).order_by('name', 'sku'))
-    references = [product for product in active if re.search(
+    lowered = query.lower()
+    # Primero la comparación barata de texto; la expresión regular solo para los candidatos.
+    references = [product for product in active if product.sku.lower() in lowered and re.search(
         r'(?<![\w./-])' + re.escape(product.sku) + r'(?![\w./-])', query, re.I,
     )]
     if references:
         return [_as_dict(product) for product in references[:limit]]
-    scored = [(_score(query, product), product) for product in active]
-    return [_as_dict(product) for score, product in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0][:limit]
+    query_terms = search_terms(query)
+    if not query_terms:
+        return []
+    _forget_inactive_terms(active)
+    # Todos los términos de la consulta deben estar en el producto; se conserva el orden por nombre.
+    matches = [product for product in active if query_terms <= _product_terms(product)]
+    return [_as_dict(product) for product in matches[:limit]]
 
 
 def product_by_sku(sku):
@@ -132,12 +132,12 @@ def product_by_sku(sku):
 
 def category_products(category, limit=6):
     """Productos activos cuya categoría contiene el texto, sin distinguir tildes ni mayúsculas."""
-    wanted = _normalize(category)
+    wanted = normalize_text(category)
     if not wanted:
         return []
     products = []
     for product in Product.objects.filter(active=True).exclude(category='').order_by('name', 'sku'):
-        if wanted in _normalize(product.category):
+        if wanted in normalize_text(product.category):
             products.append(_as_dict(product))
             if len(products) >= limit:
                 break

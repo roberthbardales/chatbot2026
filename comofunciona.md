@@ -111,8 +111,8 @@ Es la única lógica que entiende la pregunta.
 **La búsqueda textual** (`inventory.py`) trabaja sobre los productos activos:
 
 - Quita tildes y palabras vacías («precio», «tienes», «quiero»…).
-- Aplica sinónimos de la lista de `inventory.py`.
-- Normaliza medidas: `1/2"`, `½`, «media pulgada» y `1/2 pulgada` se tratan igual; también el contenido neto (`500 ml`, `500ml`, `55 g`) y las marcas con iniciales con puntos (`e.l.f.` = `elf`).
+- Aplica sinónimos español/inglés de la lista de `inventory.py` (`bloqueador` → `protector`, `cleanser` → `limpiador`, `labial` → `labios`…).
+- Unifica el contenido neto (`500 ml`, `500ml`, `55 g`) y las marcas con iniciales con puntos (`e.l.f.` = `elf`).
 - Un producto coincide solo si **todos** los términos de la consulta están en su nombre, SKU, marca, modelo, palabras clave, categoría o especificaciones.
 - Si el texto contiene un SKU exacto de un producto, ese gana.
 

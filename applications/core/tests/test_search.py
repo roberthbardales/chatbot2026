@@ -3,7 +3,7 @@ from django.test import TestCase
 
 
 from ..models import Product
-from ..inventory import category_products, search_products as search_inventory, search_terms
+from ..inventory import category_products, search_products as search_inventory
 from ..services import answer_sheet_message
 from types import SimpleNamespace
 
@@ -12,32 +12,49 @@ class InventorySearchTests(TestCase):
     def product(self, sku, name, **kwargs):
         return Product.objects.create(sku=sku, name=name, **kwargs)
 
-    def test_fraction_and_inch_variants_are_equivalent(self):
-        for value in ['½', '1/2', 'media pulgada', '0.5 pulgadas', '1/2"']:
-            with self.subTest(value=value):
-                self.assertEqual(search_terms(value), {'dim_inch_1_2'})
-        self.assertEqual(search_terms('1½ pulgadas'), search_terms('1 1/2 pulgadas'))
-
-    def test_synonyms_find_catalog_products(self):
-        self.product('VAL-01', 'Válvula de bronce 1/2 pulgada')
-        self.product('COD-01', 'Codo inoxidable')
-        for query, sku in [('Necesito una llave de paso de media pulgada', 'VAL-01'),
-                           ('válvulas bronze ½', 'VAL-01'), ('elbow inox', 'COD-01')]:
+    def test_size_variants_find_the_same_product(self):
+        self.product('SER-30', 'Serum Vitamina C 30ml')
+        for query in ('serum vitamina c 30 ml', 'serum vitamina c 30ml', 'serum vitamina c 30 mililitros'):
             with self.subTest(query=query):
-                self.assertEqual([item['sku'] for item in search_inventory(query)], [sku])
+                self.assertEqual([item['sku'] for item in search_inventory(query)], ['SER-30'])
 
-    def test_measure_and_connection_are_required_not_partial_matches(self):
-        self.product('VAL-01', 'Válvula de bronce 1/2 pulgada NPT')
-        self.product('VAL-02', 'Válvula de bronce 3/4 pulgada BSP')
-        self.assertEqual([item['sku'] for item in search_inventory('válvula bronce media pulgada NPT')], ['VAL-01'])
-        self.assertEqual(search_inventory('válvula bronce media pulgada BSP'), [])
-        self.assertEqual(search_inventory('válvula bronce ZX999'), [])
+    def test_synonyms_connect_spanish_and_english_words(self):
+        self.product('SUN-1', 'Beauty of Joseon Relief Sun Sunscreen', category='Protector solar')
+        self.product('CLE-1', 'Cosrx Low pH Cleanser', category='Limpiador')
+        self.product('CRE-1', 'Crema Hidratante de Ceramidas', category='Crema e hidratante')
+        self.product('LAB-1', 'Carmex Bálsamo Labial', category='Labios')
+        self.product('SER-1', 'Anua Niacinamide Serum', category='Sérum y ampolla')
+        cases = [('bloqueador solar', 'SUN-1'), ('sunscreen', 'SUN-1'), ('limpiadores', 'CLE-1'),
+                 ('cleanser', 'CLE-1'), ('cream de ceramidas', 'CRE-1'),
+                 ('labial', 'LAB-1'), ('serums', 'SER-1'), ('ampollas', 'SER-1')]
+        for query, sku in cases:
+            with self.subTest(query=query):
+                found = [item['sku'] for item in search_inventory(query)]
+                self.assertEqual(found, [sku] if sku else [])
 
-    def test_mm_and_inches_are_not_equivalent(self):
-        self.product('MM-15', 'Tubo 15 mm')
-        self.product('IN-15', 'Tubo 15 pulgadas')
-        self.assertEqual([item['sku'] for item in search_inventory('tubería 15 milímetros')], ['MM-15'])
-        self.assertEqual([item['sku'] for item in search_inventory('tubo 15 pulgadas')], ['IN-15'])
+    def test_all_terms_are_required_not_partial_matches(self):
+        self.product('CRE-50', 'Crema Hidratante 50ml')
+        self.product('CRE-100', 'Crema Hidratante 100ml')
+        self.assertEqual([item['sku'] for item in search_inventory('crema hidratante 50 ml')], ['CRE-50'])
+        self.assertEqual(search_inventory('crema hidratante 200 ml'), [])
+        self.assertEqual(search_inventory('crema hidratante ZX999'), [])
+
+    def test_results_keep_name_order_and_respect_the_limit(self):
+        for index in (3, 1, 2):
+            self.product(f'CRE-{index}', f'Crema {index}')
+        self.assertEqual([item['sku'] for item in search_inventory('crema')], ['CRE-1', 'CRE-2', 'CRE-3'])
+        self.assertEqual([item['sku'] for item in search_inventory('crema', limit=2)], ['CRE-1', 'CRE-2'])
+
+    def test_a_query_with_only_stop_words_finds_nothing(self):
+        self.product('CRE-1', 'Crema')
+        self.assertEqual(search_inventory('hola, tienes precio?'), [])
+
+    def test_product_terms_follow_changes_made_by_a_sync(self):
+        item = self.product('SER-1', 'Serum Antiguo', content_hash='a')
+        self.assertEqual([p['sku'] for p in search_inventory('serum antiguo')], ['SER-1'])
+        Product.objects.filter(pk=item.pk).update(name='Serum Nuevo', content_hash='b')
+        self.assertEqual(search_inventory('serum antiguo'), [])
+        self.assertEqual([p['sku'] for p in search_inventory('serum nuevo')], ['SER-1'])
 
     def test_exact_reference_wins_without_confusing_similar_skus(self):
         self.product('VAL-01', 'Válvula de bronce')
@@ -48,9 +65,9 @@ class InventorySearchTests(TestCase):
         self.assertEqual(search_inventory('VAL-019'), [])
 
     def test_inactive_products_are_excluded_and_specs_are_searchable(self):
-        self.product('OFF', 'Válvula bronce', active=False)
-        self.product('ON', 'Válvula', specs='Bronce, conexión NPT 1/2 pulgada')
-        self.assertEqual([item['sku'] for item in search_inventory('válvula bronce NPT media pulgada')], ['ON'])
+        self.product('OFF', 'Serum', active=False)
+        self.product('ON', 'Serum', specs='Niacinamida 10%')
+        self.assertEqual([item['sku'] for item in search_inventory('serum niacinamida')], ['ON'])
         self.assertEqual(search_inventory('OFF'), [])
 
 

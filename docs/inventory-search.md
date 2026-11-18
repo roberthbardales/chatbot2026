@@ -5,18 +5,17 @@ La mejora se aplica a Google Sheets/inventario local en WhatsApp. No usa embeddi
 
 ## Búsqueda
 
-- Se normalizan mayúsculas, acentos y un conjunto explícito de sinónimos.
-  Ejemplos: `válvulas`/`valvula`, `valve`/`válvula`, `elbow`/`codo`,
-  `inox`/`inoxidable`, `tubería`/`tubo` y `llave de paso`/`válvula`.
+- Se normalizan mayúsculas, acentos y un conjunto explícito de sinónimos entre el
+  español y el inglés que mezcla el catálogo (`_SEARCH_SYNONYMS` en `inventory.py`).
+  Ejemplos: `bloqueador`/`sunscreen` → `protector`, `cleanser` → `limpiador`,
+  `cream` → `crema`, `toner` → `tonico`, `labial` → `labios`, `ampollas` → `ampolla`.
+  Se aplican por igual a la consulta y a los textos de los productos, así que basta
+  con que ambos lados converjan al mismo término.
 - Los alias adicionales del catálogo pueden registrarse en `keywords`, sin
   sincronizar la base de datos como parte de una prueba.
-- `½`, `1/2`, `media pulgada` y `0.5 pulgadas` se reconocen como la misma medida.
-  Se admiten fracciones mixtas como `1½` y `1 1/2`.
-- Las unidades se mantienen separadas: 15 mm no equivale a 15 pulgadas. Una
-  fracción sin unidad se interpreta como pulgadas, convención del catálogo
-  industrial; para milímetros hay que escribir la unidad.
-- Se conservan las diferencias entre NPT/BSP y macho/hembra. No se presume que
-  dos conexiones sean compatibles.
+- El contenido neto se unifica: `500 ml`, `500ml` y `500 mililitros` son el mismo
+  término, igual que `g`, `kg`, `l` y `oz`. Las marcas con iniciales con puntos
+  (`e.l.f.`) son una sola palabra.
 - Se buscan nombres, SKU, marca, modelo, palabras clave, categoría y
   especificaciones de productos activos. Todos los términos relevantes de una
   búsqueda textual deben estar presentes; ya no basta con coincidir en uno.
@@ -25,8 +24,10 @@ La mejora se aplica a Google Sheets/inventario local en WhatsApp. No usa embeddi
   guiones bajos. Un SKU inexistente no se sustituye por otro parecido.
 
 La búsqueda es conservadora: un modelo desconocido puede producir una petición
-de más información en vez de resultados parciales. No se añadió corrección
-difusa de errores tipográficos ni un diccionario industrial universal.
+de más información en vez de resultados parciales. No hay corrección difusa de
+errores tipográficos. Los términos de cada producto se guardan en memoria por
+proceso y se renuevan solos cuando `sync_inventory` cambia el producto
+(se compara `content_hash`).
 
 ## Confirmación y contexto
 
@@ -39,17 +40,17 @@ datos del catálogo; eso no confirma un producto para la siguiente pregunta.
 Ejemplo:
 
 ```text
-Cliente: Busco una válvula de bronce.
-Sistema: Encontré varios productos parecidos. Confirma el SKU o número de opción:
-         1. Válvula de bronce 1/2 pulgada — SKU VAL-01
-         2. Válvula de bronce 3/4 pulgada — SKU VAL-02
+Cliente: Tienes protector solar?
+Sistema: Encontré varios productos parecidos. Dime cuál es con el número de opción:
+         1. Beauty of Joseon Relief Sun SPF50
+         2. Skin1004 Centella Sun Cream 50ml
 Cliente: La segunda.
-Sistema: [Datos reales de VAL-02]
+Sistema: [Datos reales del segundo producto]
 Cliente: ¿Y cuántas unidades hay?
-Sistema: [Consulta otra vez el stock de VAL-02]
+Sistema: [Consulta otra vez el stock del segundo producto]
 ```
 
-También se puede precisar `la de media pulgada`. Una precisión que no coincide
+También se puede precisar `la de 50 ml`. Una precisión que no coincide
 con las opciones no debe cambiar silenciosamente a un producto ajeno de otra
 familia. Una consulta explícita por otro producto puede sustituir el contexto.
 

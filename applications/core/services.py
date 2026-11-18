@@ -1,9 +1,9 @@
 import json
 import re
-import unicodedata
 
 from django.conf import settings
 
+from .inventory import normalize_text
 from .inventory import product_by_sku as sheet_product_by_sku
 from .inventory import category_products as sheet_category_products
 from .inventory import search_products as sheet_search_products
@@ -11,14 +11,9 @@ from .inventory import search_terms as sheet_search_terms
 from .providers import OPENROUTER, ProviderError, generate_response
 from .responses import InventoryAnswer, _SHEET_FIELDS, _render_sheet_selection, _sheet_selection, display_sku
 
+# Tamaño suelto («la de 50 ml»): afina las opciones ofrecidas en vez de empezar otra búsqueda.
+_SIZE_TERM = re.compile(r'\d+(?:\.\d+)?(?:ml|g|kg|mg|l|oz)')
 PRODUCT_NOT_FOUND = 'No encontré ese producto en el inventario disponible.'
-
-
-def _normalize_product_text(value):
-    value = (value or '').replace("'", '').replace('’', '')
-    value = unicodedata.normalize('NFKD', value or '')
-    value = ''.join(char for char in value if not unicodedata.combining(char))
-    return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
 
 
 # Saludos, agradecimientos y despedidas: se contestan sin buscar en el catálogo ni llamar a la IA.
@@ -37,7 +32,7 @@ _SMALLTALK_REPLIES = {
 
 def _smalltalk_reply(text):
     """Respuesta fija si el mensaje es solo un saludo, un agradecimiento o una despedida."""
-    tokens = _normalize_product_text(text).split()
+    tokens = normalize_text(text).split()
     kinds = {_SMALLTALK_CATEGORY.get(token) for token in tokens}
     if not tokens or None in kinds:
         return None
@@ -74,7 +69,7 @@ def _sheet_context_choice(context, text):
     candidates = context.get('candidates', [])
     if not isinstance(candidates, list) or not all(isinstance(sku, str) for sku in candidates):
         return None
-    normalized = _normalize_product_text(text)
+    normalized = normalize_text(text)
     ordinal = re.fullmatch(r'(?:(?:la|el)\s+)?(?:(?:opcion|numero)\s+)?(\d+|primer[oa]|segund[oa]|tercer[oa])', normalized)
     if ordinal:
         value = ordinal.group(1)
@@ -96,9 +91,10 @@ def answer_sheet_message(conversation, text, image_data_url=None):
             return InventoryAnswer(reply, context)
     search_text = text
     if image_data_url:
-        vision_prompt = '''Analiza la imagen para buscar un producto en un inventario industrial.
+        vision_prompt = '''Analiza la imagen para buscar un producto en un catálogo de cosmética y cuidado de la piel.
 Devuelve únicamente entre 3 y 8 palabras clave concretas que describan el producto visible:
-tipo, nombre, material, conexión, uso, marca o modelo si son legibles.
+tipo de producto (sérum, limpiador, protector solar, labial…), marca, nombre, función o ingrediente
+y tamaño (por ejemplo 50ml) si son legibles.
 No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamente: desconocido.'''
         try:
             visual_description = generate_response(
@@ -158,9 +154,8 @@ No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamen
             if candidates and not image_data_url:
                 narrowed = [product for product in products if product['sku'] in candidates]
                 terms = sheet_search_terms(text)
-                modifiers = {'bronce', 'acero', 'inoxidable', 'npt', 'bsp', 'macho', 'hembra', 'pvc', 'cobre'}
-                refining = bool(re.match(r'^(?:y )?(?:la|el|esa|ese) de\b', _normalize_product_text(text))) or bool(terms) and all(
-                    term.startswith('dim_') or term in modifiers for term in terms
+                refining = bool(re.match(r'^(?:y )?(?:la|el|esa|ese) de\b', normalize_text(text))) or bool(terms) and all(
+                    _SIZE_TERM.fullmatch(term) for term in terms
                 )
                 if narrowed or refining:
                     products = narrowed

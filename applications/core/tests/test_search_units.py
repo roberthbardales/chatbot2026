@@ -21,10 +21,6 @@ class ContentUnitTests(SimpleTestCase):
         self.assertEqual(search_terms('spf 50'), {'spf', '50'})
         self.assertNotIn('2l', search_terms('crema 2 lineas'))
 
-    def test_existing_dimensions_are_unchanged(self):
-        self.assertEqual(search_terms('1/2 pulgada'), {'dim_inch_1_2'})
-        self.assertEqual(search_terms('12 mm'), {'dim_mm_12_1'})
-
 
 class DottedBrandTests(SimpleTestCase):
     def test_dotted_initials_become_one_word(self):

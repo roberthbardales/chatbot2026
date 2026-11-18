@@ -130,14 +130,14 @@ class InventoryConversationTests(TestCase):
 
     def test_measure_can_disambiguate_previous_options(self):
         self.ask('válvula bronce')
-        selected = self.ask('la de media pulgada')
+        selected = self.ask('la de 1/2 pulgada')
         self.assertIn('VAL-01', selected)
         self.assertNotIn('VAL-02', selected)
 
     def test_refinement_does_not_switch_to_unrelated_product(self):
-        Product.objects.create(sku='TUB-01', name='Tubo de una pulgada', specs='1 pulgada')
+        Product.objects.create(sku='TUB-01', name='Tubo de 30 ml', specs='30 ml')
         self.ask('válvula bronce')
-        result = self.ask('la de 1 pulgada')
+        result = self.ask('la de 30 ml')
         self.assertIn('No encontré', result)
         self.assertNotIn('TUB-01', result)
 
@@ -172,7 +172,7 @@ class InventoryConversationTests(TestCase):
         self.assertIn('No encontré', self.ask('¿Precio de la válvula ZX999?'))
 
     def test_image_match_requires_confirmation_even_for_single_product(self):
-        self.generate.return_value = 'válvula bronce media pulgada'
+        self.generate.return_value = 'válvula bronce 1/2 pulgada'
         result = self.ask('El usuario envió una imagen.', image_data_url='image')
         self.assertIn('posibles coincidencias', result)
         self.assertNotIn('está a', result)

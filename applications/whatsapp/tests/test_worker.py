@@ -164,7 +164,7 @@ class WorkerCommandTests(TestCase):
         self.outgoing = patch(prefix + 'process_outbox', return_value=2).start()
         self.heartbeat = patch(prefix + 'Heartbeat', side_effect=lambda *args: nullcontext()).start()
         self.connections = patch(prefix + 'close_old_connections').start()
-        self.sync = patch('applications.core.inventory.sync_inventory').start()
+        self.sync = patch('applications.core.inventory_sync.apply_inventory').start()
         self.addCleanup(patch.stopall)
 
     def test_once_processes_both_queues_without_inventory_sync(self):
