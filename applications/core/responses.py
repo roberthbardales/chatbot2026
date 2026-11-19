@@ -104,11 +104,24 @@ def _join_natural(parts):
     return ', '.join(parts[:-1]) + ' y ' + parts[-1]
 
 
-def _render_sheet_selection(selection, from_image):
+_MAX_LITERAL_DESCRIPTION = 500
+
+
+def _shorten(text, maximum):
+    text = ' '.join(text.split())
+    return text if len(text) <= maximum else text[:maximum].rsplit(' ', 1)[0] + '…'
+
+
+def _render_sheet_selection(selection, from_image, descriptions=None):
+    """`descriptions` (sku -> texto) trae la respuesta ya redactada sobre la descripción de un producto."""
+    descriptions = descriptions or {}
     lines = ['Estas son las posibles coincidencias; confírmame cuál es o el tamaño 👇'] if from_image else []
     for index, (product, fields) in enumerate(selection):
         parts = []
+        about = descriptions.get(product['sku'])
         for field in fields:
+            if field == 'descripcion' and about:
+                continue
             key, _label = _SHEET_FIELDS[field]
             present, missing = _FIELD_PHRASES[field]
             value = product.get(key)
@@ -129,11 +142,18 @@ def _render_sheet_selection(selection, from_image):
                 if value == 1 and unit.lower() == 'unidades':
                     unit = 'unidad'
                 value = f'{value} {unit}'
+            if field == 'descripcion':
+                value = _shorten(str(value), _MAX_LITERAL_DESCRIPTION)
             parts.append(present.format(value=value))
         opener = random.choice(_OPENERS) if index == 0 and not from_image else ''
         sku = display_sku(product['sku'])
         label = f"{product['name']} (SKU {sku})" if sku else product['name']
-        lines.append(f"{opener}{label}: {_join_natural(parts)}.")
+        if parts:
+            lines.append(f"{opener}{label}: {_join_natural(parts)}.")
+        else:
+            lines.append(f"{opener}{label}:")
+        if about:
+            lines.append(about)
     if random.random() < _CLOSER_PROBABILITY:
         lines.append(random.choice(_CLOSERS))
     return '\n'.join(lines)

@@ -19,6 +19,13 @@ La mejora se aplica a Google Sheets/inventario local en WhatsApp. No usa embeddi
 - Se buscan nombres, SKU, marca, modelo, palabras clave, categoría y
   especificaciones de productos activos. Todos los términos relevantes de una
   búsqueda textual deben estar presentes; ya no basta con coincidir en uno.
+- **Respaldo por descripción:** si la búsqueda por nombre, marca y demás campos no encuentra
+  nada, se repite incluyendo la descripción (`Product.description`): los términos pueden
+  repartirse entre el nombre y la descripción («protector piel sensible»). Si el nombre ya
+  da resultados, la descripción no interviene. Sus términos se guardan en memoria igual que
+  los del nombre y solo se calculan cuando hace falta.
+- Palabras como `sirve`, `funciona`, `usar`, `uso`, `ingredientes` y `beneficios` no cuentan
+  como términos de búsqueda, para que «¿para qué sirve el X?» encuentre el producto X.
 - Un SKU exacto tiene prioridad. Las referencias explícitas con `SKU`, `código`
   o `referencia` se consultan directamente, admitiendo puntos, guiones, barras y
   guiones bajos. Un SKU inexistente no se sustituye por otro parecido.
@@ -68,6 +75,27 @@ stock y demás valores se vuelven a obtener del inventario activo en cada consul
 Si un producto se elimina o desactiva, no se reutilizan sus valores anteriores.
 Una búsqueda sin resultados limpia el contexto. Los saludos, agradecimientos y despedidas
 se contestan con un texto fijo, sin buscar ni llamar a la IA, y conservan el contexto.
+
+## Preguntas sobre la descripción
+
+Cuando el cliente pregunta algo que la descripción responde («¿para qué sirve?», «¿es para
+piel grasa?»), la IA elige el campo `descripcion` y el servidor hace una segunda llamada
+(`_answer_from_description` en `services.py`):
+
+- La IA ve **solo** el nombre y la descripción del producto y la pregunta. Debe contestar en
+  3 frases como máximo, sin inventar y sin mencionar precio ni stock. La respuesta se recorta
+  a 700 caracteres.
+- Si la descripción no contiene lo preguntado, la IA responde `NO_DATO` y el cliente recibe
+  «No tengo ese dato en la descripción del producto.».
+- Si la IA falla, se muestra la descripción literal recortada a 500 caracteres.
+- Solo se hace con un producto. En una lista de varios se muestra la descripción literal.
+- Cuesta una llamada más a la IA (2 en total) y cuenta en el cupo diario.
+- La primera llamada (elegir campos) ya no recibe la descripción completa, solo
+  `tiene_descripcion`, para gastar menos tokens.
+- **Seguimiento:** tras elegir un producto, una pregunta cuyas palabras no encuentran nada pero sí
+  están en el nombre o la descripción del producto elegido («¿es para piel grasa?») se responde
+  sobre ese producto. Si alguna palabra no aparece ahí («base mate»), se responde «No encontré…».
+  Por eso «¿tiene retinol?» como seguimiento da «No encontré…» si «retinol» no figura en el producto.
 
 ## Persistencia y seguridad
 

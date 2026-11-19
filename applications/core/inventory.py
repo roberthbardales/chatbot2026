@@ -21,7 +21,8 @@ _SEARCH_STOP_WORDS = set('''a al algo buscar busca busco buscarme necesito neces
     medida medidas su sus me puedes puede favor hola buenas gracias que cual cuales es son se si
     indicame indica confirmo correcto correcta primera primero segunda segundo tercera tercero
     opcion opciones numero sku codigo referencia marca marcas modelo modelos categoria categorias
-    descripcion caracteristicas material materiales esto ahora tambien otro otra otros otras'''.split())
+    descripcion caracteristicas material materiales esto ahora tambien otro otra otros otras
+    sirve sirven funciona usa usar uso ingredientes beneficios'''.split())
 # Palabra que escribe el cliente -> término del catálogo. Se aplica por igual a la consulta y a
 # los textos de los productos, así que basta con que ambos lados converjan al mismo término.
 _SEARCH_SYNONYMS = {
@@ -101,14 +102,28 @@ def _product_terms(product):
     return terms
 
 
+# Términos de la descripción: solo se calculan cuando la búsqueda por nombre no encuentra nada.
+_DESCRIPTION_TERMS = {}
+
+
+def _description_terms(product):
+    cached = _DESCRIPTION_TERMS.get(product.pk)
+    if cached and cached[0] == product.content_hash:
+        return cached[1]
+    terms = search_terms(product.description)
+    _DESCRIPTION_TERMS[product.pk] = (product.content_hash, terms)
+    return terms
+
+
 def _forget_inactive_terms(active):
     current = {product.pk for product in active}
-    for pk in [pk for pk in _PRODUCT_TERMS if pk not in current]:
-        _PRODUCT_TERMS.pop(pk, None)
+    for cache in (_PRODUCT_TERMS, _DESCRIPTION_TERMS):
+        for pk in [pk for pk in cache if pk not in current]:
+            cache.pop(pk, None)
 
 
 def search_products(query, limit=6):
-    """Productos que coinciden, por nombre. `limit=None` devuelve todos."""
+    """Productos que coinciden, por nombre y, si no hay ninguno, también por descripción. `limit=None` devuelve todos."""
     active = list(Product.objects.filter(active=True).order_by('name', 'sku'))
     lowered = query.lower()
     # Primero la comparación barata de texto; la expresión regular solo para los candidatos.
@@ -123,6 +138,10 @@ def search_products(query, limit=6):
     _forget_inactive_terms(active)
     # Todos los términos de la consulta deben estar en el producto; se conserva el orden por nombre.
     matches = [product for product in active if query_terms <= _product_terms(product)]
+    if not matches:
+        # Respaldo: los términos pueden repartirse entre el nombre y la descripción («protector piel sensible»).
+        matches = [product for product in active
+                   if product.description and query_terms <= (_product_terms(product) | _description_terms(product))]
     return [_as_dict(product) for product in matches[:limit]]
 
 

@@ -1,6 +1,6 @@
 # A corregir
 
-Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 268 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
+Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot solo de WhatsApp (`chat` es ahora `core`). Estado base: `manage.py check` limpio, sin migraciones pendientes y 281 pruebas en verde (1 omitida; es el ensayo de `pg_dump`/`pg_restore`, que necesita las herramientas de PostgreSQL). Son problemas de funcionamiento, no roturas.
 
 ## Hecho
 
@@ -24,6 +24,7 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 - **Aviso de listados con número equivocado** (`services.py`): si la IA omitía un producto, el aviso decía «te muestro 5» aunque se veían 4. Ahora el aviso y las opciones guardadas corresponden a lo que se muestra.
 - **Frases con vocabulario industrial** (`responses.py`, `services.py`): «te busco otra medida», «confírmame el modelo o la medida» y «tipo, marca o conexión» ahora hablan de producto y tamaño. Una prueba vigila que los textos del cliente no vuelvan a incluir palabras como medida, conexión, pulgada o válvula.
 - **Documentación al día:** README (versión de Django, enlace roto a `contexto.md`, `createsuperuser`, `TRUSTED_PROXY_COUNT`), `usage-limits.md` (modo humano y panel) y `vps.md` (el worker es obligatorio: servicio systemd, panel y comprobación de salud). Nueva guía `docs/probar-el-bot.md`.
+- **Descripción del producto** (`inventory.py`, `services.py`, `responses.py`): el bot responde «¿para qué sirve?» o «¿es para piel grasa?» con la IA, usando solo la descripción (o dice que no tiene ese dato), y la busca como respaldo cuando el nombre no coincide. La IA ya no recibe la descripción completa al elegir campos (antes punto 11). Ver `docs/inventory-search.md`.
 - **Pillow** quitado de `requirements.txt` (solo servía al panel).
 - **Documentación** reescrita para el bot solo de WhatsApp.
 
@@ -42,8 +43,7 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 8. Código duplicado en `inventory_source.py`: `_available_stock` y `_availability` normalizan el valor de «Disponible» dos veces.
 9. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
 10. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
-11. El prompt a la IA incluye la `description` completa de cada producto (`services.py`). Con descripciones largas gasta más tokens de los necesarios; basta enviar los campos que la IA puede elegir.
-12. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
+11. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
 
 ## Orden sugerido
 
