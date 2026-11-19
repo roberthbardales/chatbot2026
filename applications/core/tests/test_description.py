@@ -91,9 +91,22 @@ class DescriptionAnswerTests(TestCase):
 
     def test_price_and_description_are_combined(self):
         self.generate.side_effect = [_selection('ANU-1', ['precio', 'descripcion']), 'Sirve para piel sensible.']
-        answer = self.ask()
+        answer = self.ask('precio y para qué sirve el Anua Heartleaf Protector Solar')
         self.assertIn('está a 80.00', answer)
         self.assertIn('Sirve para piel sensible.', answer)
+
+    def test_unasked_price_and_stock_are_dropped_when_only_the_description_is_asked(self):
+        self.generate.side_effect = [_selection('ANU-1', ['precio', 'stock', 'descripcion']), 'Protege del sol.']
+        answer = self.ask('para qué sirve el Anua Heartleaf Protector Solar')
+        self.assertNotIn('80.00', answer)
+        self.assertNotIn('hay 4', answer)
+        self.assertIn('Protege del sol.', answer)
+
+    def test_price_asked_together_with_the_description_is_kept(self):
+        self.generate.side_effect = [_selection('ANU-1', ['precio', 'stock', 'descripcion']), 'Protege del sol.']
+        answer = self.ask('cuánto cuesta y para qué sirve el Anua Heartleaf Protector Solar')
+        self.assertIn('está a 80.00', answer)
+        self.assertIn('Protege del sol.', answer)
 
     def test_literal_description_if_the_ai_fails_on_the_second_call(self):
         self.generate.side_effect = [_selection('ANU-1', ['descripcion']), ProviderError('boom')]
