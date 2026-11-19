@@ -29,7 +29,6 @@ WhatsApp ─► webhook ─► cola ─► worker whatsapp_worker ─► answer_
 | `applications/users` | usuario por correo, roles, login/registro con límites |
 | `applications/core` | motor sin vistas: catálogo, IA, respuestas, límites, sincronización |
 | `applications/whatsapp` | webhook, cola entrante, outbox, worker |
-| `deploy/` | servicios systemd, tareas Windows, respaldo previo al despliegue |
 | `docs/` | documentación operativa por tema |
 
 ## 3. Aplicaciones
@@ -136,11 +135,11 @@ Las identidades se guardan como HMAC salado (`identity()`), no en claro. `X-Forw
 
 ## 7. Operación y despliegue
 
-- **Procesos**: servidor web (WSGI, para el webhook) + `whatsapp_worker` obligatorio para responder. Plantillas en `deploy/systemd/` (servicio del worker y temporizador de salud) y `deploy/windows/` (tareas programadas).
+- **Procesos**: servidor web (WSGI, para el webhook) + `whatsapp_worker` obligatorio para responder. Supervisión del worker en [whatsapp-worker.md](whatsapp-worker.md).
 - **Salud**: el latido se actualiza en un hilo propio; el progreso, en el bucle principal, de modo que un bucle colgado se distingue de un proceso muerto. `whatsapp_healthcheck` falla si no hay latido/progreso o hay errores. El panel muestra el mismo diagnóstico.
 - **Comandos de solo lectura**: `whatsapp_healthcheck`, `sync_inventory --dry-run`.
 - **Comandos sensibles**: `whatsapp_worker --once` (envía mensajes reales), `sync_inventory`, `cleanup_chat_limits` (borra registros caducados), `cleanup_whatsapp_data` (borra latidos antiguos).
-- **Respaldo**: `deploy/predeploy_backup.py` y ensayo en `core/tests/test_backup_restore`; ver [recovery-validation.md](recovery-validation.md).
+- **Respaldo**: ensayo en `core/tests/test_backup_restore`; ver [recovery-validation.md](recovery-validation.md).
 
 ## 8. Pruebas
 

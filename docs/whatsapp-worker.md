@@ -101,58 +101,20 @@ El `.env` raíz debe estar disponible para la cuenta del servicio, con PostgreSQ
 credenciales y permisos correctos. No incluyas secretos en argumentos de tareas
 o archivos unit. No se instaló ni activó ninguna tarea o servicio del sistema.
 
-### Windows: Programador de tareas
+### Supervisión
 
-Se incluyen wrappers:
-- `deploy/windows/start-whatsapp-worker.ps1`: inicia el worker real y propaga su salida.
-- `deploy/windows/check-whatsapp-worker.ps1`: comprueba salud y propaga su salida.
+El repositorio ya no incluye plantillas de servicio. Usa el supervisor de tu sistema (systemd en Linux, el
+Programador de tareas en Windows, o el que prefieras) con estas pautas:
 
-Configura una tarea para el primero:
-1. Desencadenador **Al iniciar el sistema**.
-2. Cuenta de servicio con permisos de lectura del proyecto/`.env`, acceso a
-   PostgreSQL y red; ejecutar aunque no haya sesión interactiva.
-3. Programa `powershell.exe`; argumentos de ejemplo, ajustando la ruta:
+- Ejecuta `python manage.py whatsapp_worker` de forma continua, con la cuenta que pueda leer el `.env` y acceder a PostgreSQL.
+- Reinicia el proceso si falla (`Restart=on-failure` en systemd) y no arranques una segunda instancia.
+- Usa SIGINT para detenerlo de forma controlada; si se termina a la fuerza, los tokens y plazos existentes
+  permiten recuperar el trabajo abandonado.
+- Ejecuta `python manage.py whatsapp_healthcheck` cada minuto: su código de salida no es cero si el worker no está
+  saludable. Vigila esos fallos aparte del servicio del worker.
+- Un proceso vivo pero atascado no lo reinicia nadie por sí solo: define una política de reinicio si lo necesitas.
 
-   ```text
-   -NoProfile -NonInteractive -File "D:\Proyectos GIT\chatbot2026\deploy\windows\start-whatsapp-worker.ps1"
-   ```
-
-4. Reiniciar si falla, por ejemplo cada minuto; no iniciar una segunda instancia
-   si ya está en ejecución. Desactiva el límite de duración de la tarea continua.
-5. Configura captura/retención de logs en tu entorno; el Programador de tareas
-   no conserva por sí solo todo el stdout/stderr del proceso.
-
-Crea otra tarea periódica cada minuto para `check-whatsapp-worker.ps1`. Su último
-resultado será no cero si el worker no está saludable. Revisa/monitoriza esos
-fallos independientemente de la tarea del worker. Un bloqueo con proceso vivo
-requiere intervención o una política explícita del supervisor para reiniciarlo.
-
-### Linux: systemd
-
-Las plantillas están en `deploy/systemd/`:
-- `chatbot-whatsapp-worker.service`: arranque y reinicio ante salida con error.
-- `chatbot-whatsapp-health.service` y `.timer`: comprobación independiente cada minuto.
-
-Antes de instalarlas, cambia `User`, `WorkingDirectory` y la ruta del intérprete
-por los valores de tu servidor. La cuenta debe tener acceso al `.env` y a la base
-de datos. Una vez revisadas, los comandos de instalación son:
-
-```bash
-sudo cp deploy/systemd/chatbot-whatsapp-* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now chatbot-whatsapp-worker.service
-sudo systemctl enable --now chatbot-whatsapp-health.timer
-```
-
-Estos comandos **arrancan el envío real** y deben ejecutarse solo durante el
-despliegue autorizado. Consulta los logs con `journalctl -u
-chatbot-whatsapp-worker.service` y `journalctl -u chatbot-whatsapp-health.service`.
-El worker usa SIGINT para parada controlada; si debe ser terminado a la fuerza,
-los tokens y plazos existentes permiten recuperar el trabajo abandonado.
-
-`Restart=on-failure` recupera caídas del proceso, no detecta por sí solo un proceso
-vivo atascado. El temporizador detecta la falta de progreso y registra fallo;
-conecta ese estado a alertas y define una política de reinicio si lo necesitas.
+Iniciar el worker **arranca el envío real**: hazlo solo durante un despliegue autorizado.
 
 ## Límites
 

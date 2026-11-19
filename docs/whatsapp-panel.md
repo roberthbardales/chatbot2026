@@ -62,5 +62,5 @@ Todas las rutas cuelgan de `/whatsapp/` y exigen el mismo permiso.
 
 - `views.py`: vistas y permiso (`manager_required`); `panel.py`: datos en JSON; `services.create_manual_message`.
 - `templates/whatsapp/dashboard.html`: página con Tailwind por CDN y JavaScript propio dentro de la plantilla (sin compilación ni archivos estáticos). El contenido se inserta con `textContent`, nunca como HTML.
-- Migración `whatsapp/0003_modo_humano_y_mensajes_manuales`: añade `WhatsAppContact.mode` y `WhatsAppMessage.is_manual`.
+- Migración `whatsapp/0001_initial`: incluye `WhatsAppContact.mode` y `WhatsAppMessage.is_manual`.
 - Pruebas: `tests/test_panel.py` (permisos, datos y acciones) y `tests/test_human_mode.py` (el bot calla en modo humano).
