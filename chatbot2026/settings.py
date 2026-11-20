@@ -216,6 +216,11 @@ AI_DAILY_TOKEN_LIMIT = env.int('AI_DAILY_TOKEN_LIMIT', default=2000000)
 AI_MAX_OUTPUT_TOKENS = env.int('AI_MAX_OUTPUT_TOKENS', default=1024)
 AI_MAX_PROMPT_CHARACTERS = env.int('AI_MAX_PROMPT_CHARACTERS', default=24000)
 AI_IMAGE_TOKEN_RESERVE = env.int('AI_IMAGE_TOKEN_RESERVE', default=10000)
+# Agente conversacional con herramientas (ver plan-agente.md). Apagado: responde el motor de siempre.
+AI_AGENT_ENABLED = env.bool('AI_AGENT_ENABLED', default=False)
+AI_AGENT_MAX_TOOL_CALLS = env.int('AI_AGENT_MAX_TOOL_CALLS', default=4)
+AI_AGENT_TEMPERATURE = env.float('AI_AGENT_TEMPERATURE', default=0.3)
+AI_HISTORY_MESSAGES = env.int('AI_HISTORY_MESSAGES', default=10)
 GOOGLE_SHEET_PRODUCTS_CSV_URL = env(
     'GOOGLE_SHEET_PRODUCTS_CSV_URL',
     default=_OTHER_ENV.get('GOOGLE_SHEET_PRODUCTS_CSV_URL', ''),
