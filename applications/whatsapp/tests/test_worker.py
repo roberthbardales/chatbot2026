@@ -325,3 +325,18 @@ class SendLoggingTests(TestCase):
         self.assertIn('***5678', output)
         # The full diagnostic is still kept for operators in Outbox.last_error.
         self.assertIn('51912345678', caught.exception.diagnostic())
+
+
+# Estas pruebas simulan el motor de plantillas: no deben depender de AI_AGENT_ENABLED del .env
+# (con el agente encendido llamarían a OpenRouter de verdad).
+from django.test import override_settings as _override_settings  # noqa: E402
+
+_AGENT_OFF = _override_settings(AI_AGENT_ENABLED=False)
+
+
+def setUpModule():
+    _AGENT_OFF.enable()
+
+
+def tearDownModule():
+    _AGENT_OFF.disable()

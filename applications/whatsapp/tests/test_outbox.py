@@ -331,3 +331,18 @@ class WhatsAppSendErrorTests(SimpleTestCase):
         for code in [100, 130403, 131009, 131021, 131026, 131047, 131050]:
             with self.subTest(code=code):
                 self.assertFalse(WhatsAppAPIError('error', code=code).retryable)
+
+
+# Estas pruebas simulan el motor de plantillas: no deben depender de AI_AGENT_ENABLED del .env
+# (con el agente encendido llamarían a OpenRouter de verdad).
+from django.test import override_settings as _override_settings  # noqa: E402
+
+_AGENT_OFF = _override_settings(AI_AGENT_ENABLED=False)
+
+
+def setUpModule():
+    _AGENT_OFF.enable()
+
+
+def tearDownModule():
+    _AGENT_OFF.disable()
