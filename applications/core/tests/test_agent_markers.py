@@ -118,6 +118,72 @@ def agent_tools():
     return TOOLS
 
 
+class StockClaimTests(SimpleTestCase):
+    def setUp(self):
+        self.seen = {
+            'IN': _product('IN', name='Crema Alfa 50ml', stock=4),
+            'OUT': _product('OUT', name='Crema Beta 50ml', stock=0),
+            'LONG': _product('LONG', name='Crema Alfa 50ml tono claro', stock=0),
+            'NIL': _product('NIL', name='Crema Gama', stock=None, available=None),
+        }
+
+    def render(self, text):
+        return render_markers(text, self.seen, '')
+
+    def test_true_claims_pass(self):
+        for text in ('La *Crema Beta 50ml* está agotada.', 'La *Crema Alfa 50ml* está disponible.',
+                     '1. *Crema Beta 50ml* - {precio:OUT} (agotado)', 'La *Crema Beta 50ml* no está disponible.',
+                     'La *Crema Beta 50ml* está sin stock.'):
+            with self.subTest(text=text):
+                self.render(text)
+
+    def test_false_claims_are_rejected(self):
+        for text in ('La *Crema Alfa 50ml* está agotada.', 'La *Crema Beta 50ml* está disponible.',
+                     'La *Crema Beta 50ml* sí tiene stock: hay stock.', 'La *Crema Gama* está disponible.',
+                     'La *Crema Gama* está agotada.', 'La *Crema Alfa 50ml* no está disponible.'):
+            with self.subTest(text=text), self.assertRaises(AgentRejected) as caught:
+                self.render(text)
+            self.assertEqual(caught.exception.reason, 'wrong_stock_state')
+
+    def test_the_claim_is_checked_per_line(self):
+        self.render('La *Crema Alfa 50ml* es ligera.\nLa *Crema Beta 50ml* está agotada.')
+        with self.assertRaises(AgentRejected):
+            self.render('La *Crema Beta 50ml* está agotada.\nLa *Crema Alfa 50ml* está agotada.')
+
+    def test_a_line_naming_several_products_is_not_judged(self):
+        self.render('La *Crema Alfa 50ml* está disponible pero la *Crema Beta 50ml* no.')
+        self.render('Entre *Crema Alfa 50ml* y *Crema Beta 50ml*, una está agotada.')
+
+    def test_a_name_inside_a_longer_name_does_not_count_twice(self):
+        self.render('La *Crema Alfa 50ml tono claro* está agotada.')
+        with self.assertRaises(AgentRejected):
+            self.render('La *Crema Alfa 50ml tono claro* está disponible.')
+
+    def test_a_marker_for_the_stock_is_always_fine(self):
+        self.assertEqual(self.render('La *Crema Beta 50ml*: {stock:OUT}.'), 'La *Crema Beta 50ml*: está agotado.')
+
+    def test_claims_without_a_named_product_are_ignored(self):
+        self.render('Está disponible en la tienda.')
+
+
+class LeaseTests(TestCase):
+    def lease_seconds(self, **settings):
+        from django.utils import timezone
+        from ..limits import principal_slot
+        from ..models import UsageLease
+        with override_settings(OPENROUTER_TIMEOUT=30, CHAT_REQUEST_LEASE_SECONDS=300, **settings):
+            before = timezone.now()
+            with principal_slot('contacto-1'):
+                lease = UsageLease.objects.get(scope='request:contacto-1')
+                return (lease.expires_at - before).total_seconds()
+
+    def test_the_lock_covers_the_agents_worst_case(self):
+        self.assertGreater(self.lease_seconds(AI_AGENT_ENABLED=True, AI_AGENT_MAX_TOOL_CALLS=4), 30 * 12 + 55)
+
+    def test_without_the_agent_it_keeps_the_old_duration(self):
+        self.assertAlmostEqual(self.lease_seconds(AI_AGENT_ENABLED=False), 300, delta=5)
+
+
 @override_settings(AI_AGENT_MAX_TOOL_CALLS=4, AI_HISTORY_MESSAGES=10, MAX_PRODUCTS_IN_CONTEXT=2)
 class TotalNoteTests(TestCase):
     NOTE = 'Hay 3 productos en total y te muestro 2.'

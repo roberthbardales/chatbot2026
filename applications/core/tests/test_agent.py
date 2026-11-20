@@ -112,6 +112,14 @@ class AgentLoopTests(AgentTestCase):
         self.assertEqual(result['productos'][0]['sku'], 'SUN-1')
         self.assertEqual(second[-1]['tool_call_id'], 'c1')
 
+    def test_the_cost_of_each_answer_is_logged_without_its_content(self):
+        self.chat.side_effect = [_call('buscar_productos', {'consulta': 'protector solar'}), _text('Tengo el Anua Protector Solar')]
+        with self.assertLogs('applications.core.agent', 'INFO') as logs:
+            answer_with_agent(self.conversation, 'tienes protector solar?')
+        line = next(line for line in logs.output if 'Agent answered' in line)
+        self.assertIn('calls=2 tools=1 retried=False seconds=', line)
+        self.assertNotIn('protector', line)
+
     def test_answer_without_tools(self):
         self.chat.side_effect = [_text('Hola, ¿qué buscas?')]
         self.assertEqual(str(answer_with_agent(self.conversation, 'hola')), 'Hola, ¿qué buscas?')

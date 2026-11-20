@@ -234,8 +234,12 @@ def _generate_response(contact, batch, text, image_data_url):
                 if text == IMAGE_PLACEHOLDER:
                     agent_text = '' if keywords else 'El cliente envió una imagen que no se pudo identificar.'
             return answer_with_agent(conversation, agent_text, _agent_history(contact, batch), keywords)
-        except LimitExceeded:
-            raise
+        except LimitExceeded as exc:
+            # El cupo agotado aplaza el mensaje; un contexto demasiado grande para el agente
+            # (historial y resultados) se intenta con el motor de plantillas, que usa mucho menos.
+            if exc.code != 'context_limit':
+                raise
+            logger.warning('Agent context too large, using the template engine')
         except AgentError as exc:
             logger.warning('Agent could not answer, using the template engine: %s', exc)
         except Exception:

@@ -6,6 +6,7 @@ sustituye con los valores de la base, y el texto final se valida antes de enviar
 import json
 import logging
 import re
+import time
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -249,6 +250,7 @@ _CORRECTIONS = {
     'hand_written_figure': 'escribiste a mano una cifra de precio o de stock',
     'stray_braces': 'dejaste llaves o un marcador inválido',
     'missing_requested_figure': 'el cliente pidió el precio o el stock y no incluiste su marcador',
+    'wrong_stock_state': 'dijiste que un producto está agotado o disponible y no coincide con su estado real',
 }
 
 
@@ -262,6 +264,30 @@ def _correction_notice(reason):
 
 def _numbers(text):
     return {number.replace(',', '.') for number in re.findall(r'\d+(?:[.,]\d+)?', text or '')}
+
+
+_OUT_CLAIM = re.compile(r'\b(?:agotad[oa]s?|sin\s+stock|no\s+(?:est[aá]\s+)?disponibles?|no\s+hay\s+stock)\b', re.I)
+_IN_CLAIM = re.compile(r'\b(?:disponibles?|en\s+stock|hay\s+stock|con\s+stock)\b', re.I)
+
+
+def _check_stock_claims(text, masked, seen):
+    """Rechaza «agotado»/«disponible» escritos a mano que contradicen el estado real del producto.
+
+    Solo se comprueban las líneas que nombran, con su nombre completo, a un único producto consultado:
+    si nombran a varios no se sabe a cuál se refiere la frase."""
+    products = [(product, normalize_text(product['name'])) for product in seen.values()]
+    for line in masked.splitlines():
+        out_claim = bool(_OUT_CLAIM.search(line))
+        in_claim = bool(_IN_CLAIM.search(_OUT_CLAIM.sub(' ', line)))
+        if out_claim == in_claim:
+            continue
+        normalized = normalize_text(line)
+        named = [(product, name) for product, name in products if name and name in normalized]
+        # Un nombre contenido en otro más largo («…75ml» dentro de «…75ml tono claro») no cuenta aparte.
+        named = [(product, name) for product, name in named
+                 if not any(name != other and name in other for _p, other in named)]
+        if len(named) == 1 and _stock_state(named[0][0]) != ('agotado' if out_claim else 'disponible'):
+            raise AgentRejected('wrong_stock_state', text)
 
 
 def render_markers(text, seen, question='', earlier=''):
@@ -289,6 +315,7 @@ def render_markers(text, seen, question='', earlier=''):
             raise AgentRejected('visible_sku', text)
     if re.search(r'\d{9,}', masked):
         raise AgentRejected('visible_identifier', text)
+    _check_stock_claims(text, masked, seen)
     result = _MARKER.sub(lambda match: _marker_value(match.group(1), seen[match.group(2)]), text)
     if not result.strip():
         raise AgentRejected('empty', text)
@@ -349,6 +376,8 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
     seen = {}
     truncated = None
     executed = 0
+    calls = 0
+    started = time.monotonic()
     retried = False
     limit = max(0, settings.AI_AGENT_MAX_TOOL_CALLS)
     # Dos vueltas más que el tope de herramientas (la última, sin herramientas, fuerza el texto) y otras
@@ -356,6 +385,7 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
     for _ in range(limit + 6):
         offer_tools = executed < limit
         try:
+            calls += 1
             reply = chat_with_tools(provider, messages, TOOLS if offer_tools else [], SYSTEM_PROMPT)
         except ProviderError as exc:
             raise AgentError(str(exc)) from exc
@@ -368,9 +398,13 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
                 if requested_figures(question) - answered and (executed == 0 or seen):
                     raise AgentRejected('missing_requested_figure', reply['content'])
                 rendered = render_markers(reply['content'], seen, question, earlier)
-                return InventoryAnswer(_with_total_note(rendered, truncated), _inventory_context(conversation, seen))
+                answer = InventoryAnswer(_with_total_note(rendered, truncated), _inventory_context(conversation, seen))
+                # Para medir el costo real: llamadas a la IA, herramientas y tiempo por mensaje (sin contenido).
+                logger.info('Agent answered: calls=%s tools=%s retried=%s seconds=%.1f',
+                            calls, executed, retried, time.monotonic() - started)
+                return answer
             except AgentRejected as exc:
-                logger.warning('Agent answer rejected: reason=%s retried=%s', exc.reason, retried)
+                logger.warning('Agent answer rejected: reason=%s retried=%s calls=%s', exc.reason, retried, calls)
                 if retried:
                     raise
                 retried = True

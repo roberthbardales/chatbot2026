@@ -74,6 +74,25 @@ Después escribe `preguntar('hola')`, `preguntar('tienes protector solar?')`, et
 - **El bot entiende sinónimos:** `cleanser`/`cleansing` → limpiador, `cream` → crema, `toner` → tónico, `labial` → labios, `ampollas` → ampolla… (lista completa en `inventory.py`, `_SEARCH_SYNONYMS`).
 - **Sin respuesta:** el bot ignora audios, stickers, ubicaciones y documentos (solo lee texto e imágenes).
 
+## Nivel 1b: el agente, desde la terminal
+
+Si vas a usar el agente (`AI_AGENT_ENABLED=True`, ver [agente.md](agente.md)), prueba su conversación sin Meta ni worker:
+
+```powershell
+python manage.py probar_agente
+```
+
+Es un chat interactivo con la **IA real** y el catálogo local: no guarda nada ni envía WhatsApps, pero cada mensaje usa de 2 a 6 llamadas de tu cupo. Escribe `nuevo` para empezar de cero y `salir` (o Enter vacío) para terminar. Verás qué herramienta usa en cada vuelta (`Agent tool: name=buscar_productos ok=True`) y, si el validador rechaza una respuesta, el motivo y el texto rechazado. Preguntas útiles, en este orden:
+
+| Pregunta | Qué comprueba |
+| --- | --- |
+| `hola` | Saludo del agente |
+| `tienes protector solar?` | Lista con precio de cada uno y el total («Hay N productos en total…») |
+| `cuál me sirve para piel grasa?` | Recomendación basada en la descripción (usa `ver_producto`) |
+| `cuál es el más barato?` | Orden por precio calculado por el servidor, con `S/ …` real |
+| `protector solar de menos de 80 soles` | Filtro por precio máximo |
+| `y cuánto stock hay del primero?` | Stock real («hay 13 unidades») desde el historial |
+
 ## Nivel 2: el panel, sin Meta
 
 Prueba las conversaciones, el modo humano y el envío manual con un contacto inventado. Crea uno desde `python manage.py shell`:

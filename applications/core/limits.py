@@ -107,8 +107,11 @@ def principal_slot(principal):
         if len(expiries) >= max(1, settings.CHAT_MAX_CONCURRENT_PER_PRINCIPAL):
             raise LimitExceeded('Ya hay una consulta en curso. Espera a que termine.',
                                 (min(expiries) - now).total_seconds(), 'concurrency_limit')
+        # Peor caso de una consulta: 3 llamadas a la IA, o con el agente las vueltas con herramientas, un
+        # reintento y la descripción de la imagen.
+        calls = settings.AI_AGENT_MAX_TOOL_CALLS + 8 if settings.AI_AGENT_ENABLED else 3
         lease = UsageLease.objects.create(scope=scope, expires_at=now + timedelta(
-            seconds=max(settings.CHAT_REQUEST_LEASE_SECONDS, settings.OPENROUTER_TIMEOUT * 3 + 60)))
+            seconds=max(settings.CHAT_REQUEST_LEASE_SECONDS, settings.OPENROUTER_TIMEOUT * calls + 60)))
     try:
         yield
     finally:

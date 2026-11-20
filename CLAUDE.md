@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Documentación adicional en español: `README.md`, `arquitectura.md` (flujos) y la carpeta `docs/`: `inventory-sync.md`, `inventory-search.md`, `usage-limits.md`, `whatsapp-worker.md` (supervisión), `whatsapp-outbox.md`, `whatsapp-panel.md`, `recovery-validation.md`.
+Documentación adicional en español: `README.md`, `arquitectura.md` (flujos) y la carpeta `docs/`: `inventory-sync.md`, `inventory-search.md`, `usage-limits.md`, `whatsapp-worker.md` (supervisión), `whatsapp-outbox.md`, `whatsapp-panel.md`, `recovery-validation.md`, `agente.md` (agente con herramientas; el plan está en `plan-agente.md`).
 
 ## Preparación y verificación
 
@@ -34,16 +34,18 @@ python manage.py test applications.core.tests.test_answers.InventoryConversation
 ## Operaciones sensibles (no ejecutar como diagnóstico)
 
 - `sync_inventory` sin flags **escribe**: descarga, valida el catálogo bloqueado y aplica en una transacción (sin huella ni confirmación previa); `--dry-run` es la vista previa sin escrituras; las bajas masivas necesitan además `--allow-large-drop`. No descargues ni apliques el catálogo real por rutina: usa mocks y las funciones `preview_inventory()`/`inventory_status()` en pruebas.
-- `whatsapp_worker --once` **no** es una simulación: procesa mensajes pendientes y **envía WhatsApps reales**.
+- `whatsapp_worker --once` **no** es una simulación: procesa mensajes pendientes y **envía WhatsApps reales**. Con `AI_AGENT_ENABLED=True` en el `.env` responde con el agente.
+- Las pruebas del worker fijan `AI_AGENT_ENABLED=False` (`setUpModule`) y las del agente simulan `chat_with_tools`: ninguna debe llamar a OpenRouter ni depender del `.env`. Al añadir pruebas que procesen mensajes, hazlo igual.
 - `cleanup_chat_limits` (en `core`) elimina registros caducados de límites de uso.
 - `cleanup_whatsapp_data` elimina latidos de workers antiguos (`--dry-run` solo cuenta; no toca mensajes ni `Outbox`).
+- `probar_agente` es un chat interactivo que **llama a la IA real** (gasta cupo); no escribe en la base ni envía WhatsApps.
 - Solo lectura: `sync_inventory --dry-run`, `whatsapp_healthcheck` (devuelve salida no exitosa si falta latido/progreso o hay errores).
 
 ## Arquitectura
 
 Aplicaciones en `applications/`: `core`, `whatsapp`, `users`, `home`. El producto es un bot de WhatsApp con un panel de operadores; ya no hay chat web.
 
-- **Core** (`applications/core`, motor sin vistas ni URLs): `services.py::answer_sheet_message` (búsqueda en el catálogo local + selección validada de la IA); `inventory.py` busca en el catálogo local; `inventory_source.py` lee y valida la hoja CSV; `inventory_sync.py` sincroniza (vista previa/aplicar); `responses.py` redacta y valida las respuestas; `providers.py` integra OpenRouter; `limits.py` aplica límites de uso y control de consumo de IA (modelos de uso en `models.py`; ver `docs/usage-limits.md`). OpenRouter y Google Sheets son las opciones predeterminadas activas.
+- **Core** (`applications/core`, motor sin vistas ni URLs): `agent.py::answer_with_agent` (agente conversacional con herramientas de solo lectura y marcadores `{precio:SKU}`/`{stock:SKU}` validados; apagado por defecto con `AI_AGENT_ENABLED`; ver `docs/agente.md`); `services.py::answer_sheet_message` (motor de plantillas y respaldo del agente: búsqueda en el catálogo local + selección validada de la IA); `inventory.py` busca en el catálogo local; `inventory_source.py` lee y valida la hoja CSV; `inventory_sync.py` sincroniza (vista previa/aplicar); `responses.py` redacta y valida las respuestas; `providers.py` integra OpenRouter; `limits.py` aplica límites de uso y control de consumo de IA (modelos de uso en `models.py`; ver `docs/usage-limits.md`). OpenRouter y Google Sheets son las opciones predeterminadas activas.
 - **Fuente única**: el catálogo sale solo de la hoja de Google (`GOOGLE_SHEET_PRODUCTS_CSV_URL`), que puede ser el Excel subido tal cual: acepta `ID producto`/`SKU`, `Producto`, `Marca`, `Tipo`, `Precio`, `Stock` (o `Inventario`/`Existencias`), `Disponible`, `Precio anterior` y `URL` (ver `docs/inventory-sync.md`). Si hay `Stock`, la cantidad manda sobre `Disponible` (>0 disponible, 0 agotado); sin `Stock`, «No» equivale a stock 0 y «Sí» marca `Product.available` sin cifra. Las imágenes y demás columnas se ignoran. El blog, DummyJSON, los combos y los embeddings se eliminaron.
 - **WhatsApp** (`applications/whatsapp`): reutiliza los servicios de `core` vía `services.py`; `meta_api.py` habla con Meta. Arquitectura de cola: el webhook `/whatsapp/webhook/` valida el HMAC de Meta sobre el cuerpo original, deduplica y persiste antes de acusar recibo, sin descargar imágenes, llamar a IA ni enviar nada. Un worker independiente y obligatorio para responder (`whatsapp_worker`, `worker_runtime.py`) procesa mensajes y `Outbox` (`process_outbox()`); revisa las colas cada `WHATSAPP_WORKER_POLL_SECONDS` (2 s por defecto, `--poll-seconds`) y respeta debounce y límites. Recibir otro mensaje entrante ya no dispara el procesamiento. El worker no sincroniza inventario: cargar el catálogo (`sync_inventory`) es una operación separada. Supervisión en `docs/whatsapp-worker.md`.
 - **Panel de operadores** (`/whatsapp/`, `views.py` + `panel.py` + `templates/whatsapp/dashboard.html`, ver `docs/whatsapp-panel.md`): conversaciones, estado de cada envío, salud del worker, colas, catálogo y consumo de IA. Permite el **modo humano** (`WhatsAppContact.mode`: el bot no responde ni consume cupo) y el envío manual, que solo crea entradas `Outbox` y no llama a Meta en esa petición. «Encolado» ≠ «enviado».

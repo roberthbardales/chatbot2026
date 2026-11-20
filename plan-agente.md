@@ -1,6 +1,6 @@
 # Plan: agente conversacional de WhatsApp (opciones C + D)
 
-Estado: **propuesto, sin implementar**. Fecha: 2026-11-19.
+Estado (2026-11-19): **fases 0 a 4 implementadas**, agente apagado por defecto (`AI_AGENT_ENABLED`). Pendiente: prueba real con Meta y medir con tráfico real. Documentación del resultado en [docs/agente.md](docs/agente.md); este archivo conserva el diseño y las decisiones originales (algunos detalles cambiaron al implementar: `ver_producto` acepta nombre, un reintento ante rechazos, validación de «agotado»/«disponible» y límites de IA de 3000 llamadas y 6 000 000 de tokens).
 Documentos relacionados: [arquitectura.md](arquitectura.md), [comofunciona.md](comofunciona.md), [acorregir.md](acorregir.md).
 
 ## 1. Objetivo

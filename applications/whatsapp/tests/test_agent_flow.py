@@ -77,6 +77,13 @@ class AgentFlowTests(TestCase):
         self.engine.assert_not_called()
         self.assertFalse(Outbox.objects.exists())
 
+    def test_a_context_too_large_for_the_agent_uses_the_template_engine(self):
+        self.agent.side_effect = LimitExceeded('Demasiado contexto', 60, 'context_limit')
+        self.incoming('m1')
+        self.assertEqual(process_pending_messages(force=True), 1)
+        self.assertEqual(self.reply(), 'Respuesta de plantillas')
+        self.assertEqual(WhatsAppMessage.objects.get(message_id='m1').status, WhatsAppMessage.PROCESSED)
+
     def test_history_has_the_previous_messages_in_order_and_not_the_current_one(self):
         self.past('hola')
         self.past('¡Hola! ¿Qué buscas?', customer=False)

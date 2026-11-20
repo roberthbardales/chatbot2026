@@ -6,7 +6,12 @@ Guía del flujo completo, desde que el catálogo entra al sistema hasta que el c
 
 El chatbot responde preguntas de **precio, stock y características** de los productos de un catálogo, por **WhatsApp**.
 
-La regla que lo gobierna: **la IA nunca escribe precios ni stock**. Los productos se buscan en una base de datos local; la IA solo decide *cuáles* campos mostrar, y el servidor redacta la respuesta con los valores reales del inventario. Si la IA se equivoca o inventa algo, su respuesta se descarta.
+La regla que lo gobierna: **la IA nunca escribe precios ni stock**. Los productos se buscan en una base de datos local y el servidor pone los valores reales del inventario. Si la IA se equivoca o inventa algo, su respuesta se descarta.
+
+Hay dos motores de respuesta, y `AI_AGENT_ENABLED` elige cuál se usa primero:
+
+- **Agente** (`AI_AGENT_ENABLED=True`): la IA conversa con el historial reciente, consulta el catálogo con herramientas de solo lectura y redacta en lenguaje natural. Escribe marcadores (`{precio:SKU}`, `{stock:SKU}`) que el servidor sustituye y valida. Ver [docs/agente.md](docs/agente.md).
+- **Plantillas** (valor por defecto, y **respaldo** si el agente falla): `answer_sheet_message`, descrito en la sección 5. La IA solo decide *qué campos* mostrar y el servidor redacta con frases fijas.
 
 ## 2. Vista general
 
@@ -72,7 +77,7 @@ El worker (`whatsapp_worker`) repite cada 2 segundos:
 3. **Agrupa por contacto**: todos los mensajes pendientes de una misma persona se juntan en **una sola consulta** (los textos se unen con saltos de línea; si hubo imágenes se usa la última). Se «reclaman» con un token para que dos workers no procesen lo mismo.
 4. **Modo humano**: si un operador atiende al contacto, el mensaje se guarda **sin responder**, sin llamar a la IA ni consumir límites. Después, el **límite por contacto**: 20 consultas por minuto; si se excede, el mensaje se aplaza.
 5. **Imagen**: si hay una, se descarga de Meta (tope de tamaño configurable) y se pasa a la IA como dato en memoria. **No se guarda**.
-6. **Respuesta**: `answer_sheet_message` (sección 5), usando el historial del contacto como contexto.
+6. **Respuesta** (`_generate_response`): con el agente activado, `answer_with_agent` (los últimos 10 mensajes del contacto como historial; ver [docs/agente.md](docs/agente.md)); si falla o su respuesta es rechazada dos veces, o si está apagado, `answer_sheet_message` (sección 5). El cupo agotado aplaza el mensaje en ambos casos.
 7. **Cierre**: se comprueba, bajo bloqueo, que el intento sigue siendo dueño de los mensajes y que el contacto no pasó a modo humano mientras tanto (en ese caso la respuesta se descarta). Si es así, se guarda la respuesta del asistente y se crea el `Outbox`.
 
 Entre un contacto y el siguiente, el worker **ejecuta también la fase de salida**, para que las respuestas ya listas no esperen a toda la tanda.
@@ -88,9 +93,9 @@ respuesta ─► Outbox (1 o varias partes) ─► send_text_message ─► Meta
 - Si Meta falla de forma temporal, se reintenta con espera creciente (30 s, 60 s, 120 s… hasta 1 hora) y hasta 5 intentos. Si el error es permanente (por ejemplo, credenciales), la parte falla de inmediato.
 - Cuando Meta acepta el mensaje, la parte queda `sent=True`. **«Enviado» significa «aceptado por Meta».** Después, Meta avisa por el webhook si el mensaje se entregó, se leyó o falló; ese estado (`delivery_status`) y el motivo del fallo (`delivery_error`) quedan en la fila del `Outbox`.
 
-## 5. El cerebro: `answer_sheet_message`
+## 5. El motor de plantillas: `answer_sheet_message`
 
-Es la única lógica que entiende la pregunta.
+Es el motor que responde cuando el agente está apagado y el respaldo cuando falla. Con el agente activado, la lógica que entiende la pregunta es la de [docs/agente.md](docs/agente.md).
 
 **Paso 1: contexto previo.** Mira el último mensaje del asistente al contacto y su `inventory_context`, que puede traer una lista de `candidates` (opciones ofrecidas) o un `selected_sku` (producto ya elegido). Así entiende «la 2» o «y el stock?».
 
@@ -165,7 +170,7 @@ Detalle en [docs/whatsapp-panel.md](docs/whatsapp-panel.md).
 
 ## 9. Límites y seguridad
 
-- **Frecuencia y concurrencia** por contacto; **cupo diario de IA** (1000 peticiones y 2 000 000 de tokens *reservados* por defecto; son reservas locales, no facturación). Todo se guarda en PostgreSQL, sin Redis. Login y registro de usuarios tienen sus propios límites por correo e IP.
+- **Frecuencia y concurrencia** por contacto; **cupo diario de IA** (3000 peticiones y 6 000 000 de tokens *reservados* por defecto; son reservas locales, no facturación; con el agente cada mensaje usa de 2 a 6 peticiones). Todo se guarda en PostgreSQL, sin Redis. Login y registro de usuarios tienen sus propios límites por correo e IP.
 - **Webhook** protegido por token de verificación (obligatorio) y firma HMAC.
 - **Privacidad**: los teléfonos aparecen enmascarados en los logs (`***1234`); las imágenes de clientes solo viven en memoria; las credenciales van por variables de entorno.
 - **Producción**: con `DEBUG=False` se fuerza HTTPS y cookies seguras.

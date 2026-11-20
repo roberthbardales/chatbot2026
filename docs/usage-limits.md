@@ -14,8 +14,8 @@ dependencias adicionales.
 | `CHAT_REQUEST_LEASE_SECONDS` | 300 | Plazo mínimo de recuperación de consultas abandonadas |
 | `WHATSAPP_RATE_PER_CONTACT` | 20 | Grupos de mensajes procesados por contacto y ventana |
 | `AI_MAX_CONCURRENT_REQUESTS` | 4 | Llamadas simultáneas globales a OpenRouter |
-| `AI_DAILY_REQUEST_LIMIT` | 1000 | Máximo diario de llamadas reservadas |
-| `AI_DAILY_TOKEN_LIMIT` | 2000000 | Máximo diario de tokens reservados |
+| `AI_DAILY_REQUEST_LIMIT` | 3000 | Máximo diario de llamadas reservadas (con el agente, cada mensaje usa de 2 a 6; ver `docs/agente.md`) |
+| `AI_DAILY_TOKEN_LIMIT` | 6000000 | Máximo diario de tokens reservados |
 | `AI_MAX_OUTPUT_TOKENS` | 1024 | Máximo de salida enviado a OpenRouter como `max_tokens` |
 | `AI_MAX_PROMPT_CHARACTERS` | 24000 | Máximo de caracteres de pregunta/contexto más instrucciones de sistema |
 | `AI_IMAGE_TOKEN_RESERVE` | 10000 | Reserva adicional por imagen |
@@ -23,7 +23,10 @@ dependencias adicionales.
 Los límites de frecuencia y los dos cupos diarios admiten `0` para desactivar ese
 límite específico. La concurrencia se mantiene en al menos 1. El plazo de la
 reserva de una consulta se amplía si hace falta para cubrir tres tiempos de
-espera del proveedor y un margen de 60 segundos.
+espera del proveedor y un margen de 60 segundos; con el agente activo
+(`AI_AGENT_ENABLED`) cubre `AI_AGENT_MAX_TOOL_CALLS + 8` tiempos de espera.
+Una consulta del agente cuyo contexto supera `AI_MAX_PROMPT_CHARACTERS` se
+responde con el motor de plantillas en vez de fallar.
 
 ## Dónde se aplican
 

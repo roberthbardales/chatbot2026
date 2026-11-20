@@ -11,7 +11,7 @@ Principio rector: **la IA nunca inventa datos comerciales**. Los productos se bu
 ```text
         Google Sheets (CSV) ── sync_inventory (manual) ──► Product (PostgreSQL)
                                                                   ▲
-WhatsApp ─► webhook ─► cola ─► worker whatsapp_worker ─► answer_sheet_message ─► OpenRouter
+WhatsApp ─► webhook ─► cola ─► worker whatsapp_worker ─► agente (o answer_sheet_message) ─► OpenRouter
    ▲          (HMAC)             │                                  (selección JSON validada / visión)
    └── Meta API ◄── Outbox ◄─────┘
 ```
@@ -43,7 +43,8 @@ WhatsApp ─► webhook ─► cola ─► worker whatsapp_worker ─► answer_
 
 | Módulo | Función |
 | --- | --- |
-| `services.py` | `answer_sheet_message`: orquesta SKU explícito, elección de candidatos previos, categoría, búsqueda, imagen y selección por IA. `latest_inventory_context` lee el contexto del historial de un contacto. |
+| `agent.py` | Agente conversacional con herramientas de solo lectura, marcadores `{precio:SKU}` y validador (`answer_with_agent`, `run_tool`, `render_markers`). Ver [agente.md](agente.md). |
+| `services.py` | `answer_sheet_message` (motor de plantillas y respaldo del agente): orquesta SKU explícito, elección de candidatos previos, categoría, búsqueda, imagen y selección por IA. `latest_inventory_context` lee el contexto del historial de un contacto. |
 | `inventory.py` | Búsqueda textual sobre `Product` activos: normalización, sinónimos español/inglés, unidades de contenido neto (ml, g…), coincidencia por inclusión de todos los términos y caché en memoria de los términos de cada producto. |
 | `inventory_source.py` | Descarga y valida el CSV (alias de cabeceras, `Decimal`, límites de tamaño/filas). |
 | `inventory_sync.py` | Vista previa y aplicación con bloqueo y auditoría (`InventorySyncRun`). |
@@ -93,7 +94,7 @@ El worker (`whatsapp_worker`) ejecuta en bucle cada `WHATSAPP_WORKER_POLL_SECOND
    - Recupera mensajes `processing` abandonados (timeout 600 s; tras 3 intentos → `failed` y se encola un aviso de error al cliente).
    - Toma pendientes con *debounce* (`MESSAGE_DEBOUNCE_SECONDS`) agrupados **por contacto** con `select_for_update(skip_locked)` y un `processing_token`.
    - Aplica `WHATSAPP_RATE_PER_CONTACT` (aplaza con `retry_after_at` si se excede).
-   - Descarga la imagen, llama a `answer_sheet_message` y cierra con `_finish_processing`, que revalida propiedad del token bajo bloqueo antes de crear el mensaje del asistente y el `Outbox`.
+   - Descarga la imagen, responde con `_generate_response` (el agente si `AI_AGENT_ENABLED`, con `answer_sheet_message` como respaldo) y cierra con `_finish_processing`, que revalida propiedad del token bajo bloqueo antes de crear el mensaje del asistente y el `Outbox`.
 2. `process_outbox`: envía hasta 20 partes por llamada. Se ejecuta también **entre un contacto y el siguiente** de la fase entrante, para que las respuestas ya generadas no esperen a toda la tanda; un fallo del outbox no detiene a los entrantes.
 
 ### 4.3 Outbox y entrega

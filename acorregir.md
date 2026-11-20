@@ -25,6 +25,7 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 - **Frases con vocabulario industrial** (`responses.py`, `services.py`): «te busco otra medida», «confírmame el modelo o la medida» y «tipo, marca o conexión» ahora hablan de producto y tamaño. Una prueba vigila que los textos del cliente no vuelvan a incluir palabras como medida, conexión, pulgada o válvula.
 - **Documentación al día:** README (versión de Django, enlace roto a `contexto.md`, `createsuperuser`, `TRUSTED_PROXY_COUNT`) y `usage-limits.md` (modo humano y panel). Nueva guía `docs/probar-el-bot.md`.
 - **Descripción del producto** (`inventory.py`, `services.py`, `responses.py`): el bot responde «¿para qué sirve?» o «¿es para piel grasa?» con la IA, usando solo la descripción (o dice que no tiene ese dato), y la busca como respaldo cuando el nombre no coincide. La IA ya no recibe la descripción completa al elegir campos (antes punto 11). Ver `docs/inventory-search.md`.
+- **Agente conversacional con herramientas** (`core/agent.py`, `docs/agente.md`, `plan-agente.md`): la IA conversa con historial, consulta el catálogo con herramientas de solo lectura y escribe marcadores `{precio:SKU}`/`{stock:SKU}` que el servidor sustituye y valida (cifras escritas a mano, SKU no consultados, «agotado»/«disponible» falsos); un reintento y respaldo al motor de plantillas. Apagado por defecto (`AI_AGENT_ENABLED`). Cupo diario de IA subido a 3000 llamadas y 6 000 000 de tokens. Chat de prueba: `python manage.py probar_agente`.
 - **Pillow** quitado de `requirements.txt` (solo servía al panel).
 - **Documentación** reescrita para el bot solo de WhatsApp.
 
@@ -44,6 +45,12 @@ Revisión del 2026-11-17, sobre el código tras simplificar el proyecto a un bot
 9. `services.py` importa funciones con guion bajo de `responses.py` (`_SHEET_FIELDS`, `_render_sheet_selection`, `_sheet_selection`). Se usan entre módulos: deberían ser públicas.
 10. `inventory_source.py::_download_rows` usa `urlopen` con cualquier esquema (también `file://`). La URL sale del `.env`, riesgo bajo; convendría exigir `https://`.
 11. Nombres que quedaron del módulo anterior: `cleanup_chat_limits`, `CHAT_*` en `settings.py` y el objeto `conversation` (`provider` + `messages`) que recibe `answer_sheet_message`. Renombrarlos a algo como `limits`/`AI_*`/`contact` aclararía el código, pero cambia comandos y variables de entorno.
+
+## Pendientes del agente
+
+- **Prueba real con Meta** (el worker con `AI_AGENT_ENABLED=True` enviando WhatsApps) y medir con tráfico real: llamadas por mensaje, latencia (10 a 20 s con el debounce) y tasa de reintentos y de respaldo, con las líneas `Agent answered` y `Agent answer rejected` del log.
+- La validación es heurística: no detecta cifras escritas con palabras ni atribuciones erróneas de una descripción a otro producto.
+- No hay herramienta de políticas (horarios, envíos, devoluciones), de derivar a una persona ni de comparar, ni búsqueda por embeddings (fases futuras en `plan-agente.md`).
 
 ## Orden sugerido
 
