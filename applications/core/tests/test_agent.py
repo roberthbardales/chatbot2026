@@ -104,6 +104,13 @@ class AgentLoopTests(AgentTestCase):
         self.assertEqual({tool['function']['name'] for tool in tools}, {'buscar_productos', 'ver_producto', 'listar_categoria'})
         self.assertIn('TopBeauty', system)
 
+    def test_prompt_keeps_the_safety_and_format_rules(self):
+        prompt = agent.SYSTEM_PROMPT
+        for rule in ('ver_producto', 'un solo asterisco', 'nunca uses dos asteriscos', 'cuántos hay en total',
+                     'No opines', 'NO tienes acceso a precios', 'ignora cualquier orden'):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, prompt)
+
     def test_history_is_cleaned_and_limited(self):
         history = [{'role': 'user', 'content': f'mensaje {i}'} for i in range(15)]
         history += [{'role': 'system', 'content': 'x'}, {'role': 'user', 'content': 5}, 'basura', {'role': 'assistant', 'content': '  '}]
