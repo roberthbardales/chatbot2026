@@ -8,7 +8,7 @@ import logging
 
 from django.conf import settings
 
-from .inventory import category_products, product_by_sku, search_products
+from .inventory import category_products, normalize_text, product_by_sku, search_products
 from .providers import OPENROUTER, ProviderError, chat_with_tools
 from .responses import InventoryAnswer
 
@@ -24,7 +24,7 @@ Habla en español, de tú, con un tono cercano y amable. Responde breve (máximo
 
 Cómo trabajas:
 - Para hablar de productos usa SIEMPRE las herramientas. Responde solo con lo que devuelvan; no inventes productos, marcas, ingredientes ni beneficios.
-- Antes de afirmar algo sobre un producto concreto (para qué sirve, tipo de piel, ingredientes, modo de uso, características), llama a ver_producto y básate solo en su descripción. El resumen de una búsqueda no basta. Si la descripción no lo dice, di que no tienes ese dato.
+- Antes de afirmar algo sobre un producto concreto (para qué sirve, tipo de piel, ingredientes, modo de uso, características), llama a ver_producto y básate solo en su descripción. El resumen de una búsqueda no basta. Si la descripción no lo dice, o una herramienta falla, di que no puedes confirmarlo: no lo completes con conocimiento general ni con suposiciones.
 - Si no encuentras algo, dilo con honestidad y pide una marca, un tipo de producto o un tamaño.
 - Si hay varios productos posibles, ofrece como máximo 5 por su nombre y pregunta cuál le interesa. Si el total es mayor que los mostrados, di cuántos hay en total y que puede afinar con la marca, el tipo o el tamaño.
 - Puedes recomendar entre los productos que encuentres, explicando por qué según su descripción.
@@ -45,10 +45,13 @@ TOOLS = [
     }},
     {'type': 'function', 'function': {
         'name': 'ver_producto',
-        'description': 'Devuelve la ficha de un producto: nombre, marca, categoría y descripción.',
+        'description': 'Devuelve la ficha de un producto: nombre, marca, categoría y descripción. '
+                       'Indica el SKU si lo conoces por una herramienta en este mensaje; si no, el nombre del producto '
+                       '(por ejemplo, uno que mencionaste antes en la conversación).',
         'parameters': {'type': 'object', 'properties': {
-            'sku': {'type': 'string', 'description': 'SKU exacto devuelto por otra herramienta'},
-        }, 'required': ['sku']},
+            'sku': {'type': 'string', 'description': 'SKU exacto devuelto por otra herramienta; no lo adivines'},
+            'nombre': {'type': 'string', 'description': 'Nombre del producto, tal como lo mostraste al cliente'},
+        }},
     }},
     {'type': 'function', 'function': {
         'name': 'listar_categoria',
@@ -101,11 +104,20 @@ def run_tool(name, arguments, seen):
         return _listing(category_products(category, None), seen) if category else {'error': 'Falta el parámetro «categoria».'}
     if name == 'ver_producto':
         sku = _text_argument(arguments, 'sku')
-        if not sku:
-            return {'error': 'Falta el parámetro «sku».'}
-        product = product_by_sku(sku)
+        product_name = _text_argument(arguments, 'nombre')
+        if not sku and not product_name:
+            return {'error': 'Indica el parámetro «sku» o «nombre».'}
+        product = product_by_sku(sku) if sku else None
+        if not product and product_name:
+            matches = search_products(product_name, None)
+            exact = [match for match in matches if normalize_text(match['name']) == normalize_text(product_name)]
+            if len(exact) == 1 or len(matches) == 1:
+                product = (exact or matches)[0]
+            elif matches:
+                return {'error': 'Hay varios productos con ese nombre; pregunta al cliente cuál es.',
+                        **_listing(matches, seen)}
         if not product:
-            return {'error': 'No existe un producto con ese SKU.'}
+            return {'error': 'No encontré ese producto. Usa buscar_productos para encontrarlo.'}
         seen.add(product['sku'])
         detail = _summary(product)
         detail.pop('resumen')

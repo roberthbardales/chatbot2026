@@ -66,6 +66,26 @@ class ToolTests(AgentTestCase):
         self.assertNotIn('80', json.dumps(result))
         self.assertEqual(seen, {'SUN-1'})
 
+    def test_product_detail_by_name_when_the_sku_is_unknown(self):
+        for arguments in ({'nombre': 'Anua Protector Solar'}, {'nombre': 'anua protector solar'},
+                          {'sku': '123-inventado', 'nombre': 'Anua Protector Solar'}):
+            with self.subTest(arguments=arguments):
+                seen = set()
+                self.assertEqual(run_tool('ver_producto', arguments, seen)['sku'], 'SUN-1')
+                self.assertEqual(seen, {'SUN-1'})
+
+    def test_ambiguous_name_asks_the_model_to_choose(self):
+        result = run_tool('ver_producto', {'nombre': 'anua'}, set())
+        self.assertIn('varios', result['error'])
+        self.assertEqual(result['total'], 2)
+
+    def test_exact_name_wins_over_a_longer_match(self):
+        Product.objects.create(sku='TON-2', name='Anua Toner Mini', brand='Anua')
+        self.assertEqual(run_tool('ver_producto', {'nombre': 'Anua Toner'}, set())['sku'], 'TON-1')
+
+    def test_unknown_name_points_to_the_search_tool(self):
+        self.assertIn('buscar_productos', run_tool('ver_producto', {'nombre': 'base mate'}, set())['error'])
+
     def test_bad_input_returns_an_error_the_model_can_read(self):
         for name, arguments in [('buscar_productos', {}), ('buscar_productos', None), ('buscar_productos', {'consulta': 5}),
                                 ('ver_producto', {'sku': ''}), ('ver_producto', {'sku': 'NOPE'}),
