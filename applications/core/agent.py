@@ -222,6 +222,39 @@ def _marker_value(kind, product):
     return product.get('category') or 'sin categoría registrada'
 
 
+_STOCK_WORDS = set('stock unidad unidades quedan queda existencia existencias disponible disponibles disponibilidad '
+                   'agotado agotada agotados agotadas cantidad'.split())
+_PRICE_WORDS = set('precio precios cuesta cuestan costo costos vale valor barato barata baratos baratas '
+                   'caro cara caros caras'.split())
+
+
+def requested_figures(question):
+    """Qué cifras pide el cliente: {'precio'}, {'stock'} o ambas. Esos datos solo pueden salir de un marcador."""
+    words = set(normalize_text(question).split())
+    kinds = set()
+    if words & _STOCK_WORDS:
+        kinds.add('stock')
+    if words & _PRICE_WORDS or ('cuanto' in words and not kinds):
+        kinds.add('precio')
+    return kinds
+
+
+_CORRECTIONS = {
+    'unknown_sku': 'usaste un marcador con un SKU que ninguna herramienta devolvió en este mensaje',
+    'hand_written_figure': 'escribiste a mano una cifra de precio o de stock',
+    'stray_braces': 'dejaste llaves o un marcador inválido',
+    'missing_requested_figure': 'el cliente pidió el precio o el stock y no incluiste su marcador',
+}
+
+
+def _correction_notice(reason):
+    motive = _CORRECTIONS.get(reason, 'no cumplió las reglas de formato')
+    return (f'[Aviso del sistema] Tu respuesta anterior fue rechazada: {motive}. Responde de nuevo al cliente. '
+            'Si hablas de un producto, llama a ver_producto con su nombre (o a buscar_productos) en este mensaje y usa '
+            'los marcadores {precio:SKU} y {stock:SKU} con los SKU devueltos; nunca escribas a mano precios, '
+            'cantidades ni estados de stock («agotado», «disponible»).')
+
+
 def _numbers(text):
     return {number.replace(',', '.') for number in re.findall(r'\d+(?:[.,]\d+)?', text or '')}
 
@@ -287,9 +320,11 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
     messages = previous + [{'role': 'user', 'content': question}]
     seen = {}
     executed = 0
+    retried = False
     limit = max(0, settings.AI_AGENT_MAX_TOOL_CALLS)
-    # Una vuelta más que el tope de herramientas: la última se hace sin herramientas para forzar el texto.
-    for _ in range(limit + 2):
+    # Dos vueltas más que el tope de herramientas (la última, sin herramientas, fuerza el texto) y otras
+    # tantas por el único reintento tras un rechazo.
+    for _ in range(limit + 6):
         offer_tools = executed < limit
         try:
             reply = chat_with_tools(provider, messages, TOOLS if offer_tools else [], SYSTEM_PROMPT)
@@ -299,10 +334,20 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
             if not reply['content']:
                 raise AgentError('La IA no devolvió texto')
             try:
+                answered = {kind for kind, _sku in _MARKER.findall(reply['content'])}
+                # Precio y stock solo salen de un marcador; salvo que ya se buscó y no hubo ningún producto.
+                if requested_figures(question) - answered and (executed == 0 or seen):
+                    raise AgentRejected('missing_requested_figure', reply['content'])
                 return InventoryAnswer(render_markers(reply['content'], seen, question, earlier), {})
             except AgentRejected as exc:
-                logger.warning('Agent answer rejected: reason=%s', exc.reason)
-                raise
+                logger.warning('Agent answer rejected: reason=%s retried=%s', exc.reason, retried)
+                if retried:
+                    raise
+                retried = True
+                limit += 2
+                messages.append(reply['message'])
+                messages.append({'role': 'user', 'content': _correction_notice(exc.reason)})
+                continue
         if not offer_tools:
             raise AgentError('La IA pidió herramientas por encima del tope')
         messages.append(reply['message'])

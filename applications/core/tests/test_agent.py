@@ -136,9 +136,9 @@ class AgentLoopTests(AgentTestCase):
         history += [{'role': 'system', 'content': 'x'}, {'role': 'user', 'content': 5}, 'basura', {'role': 'assistant', 'content': '  '}]
         self.chat.side_effect = [_text('ok')]
         with override_settings(AI_HISTORY_MESSAGES=3):
-            answer_with_agent(self.conversation, 'y el más barato?', history)
+            answer_with_agent(self.conversation, 'y el siguiente?', history)
         messages = self.chat.call_args.args[1]
-        self.assertEqual([m['content'] for m in messages], ['mensaje 12', 'mensaje 13', 'mensaje 14', 'y el más barato?'])
+        self.assertEqual([m['content'] for m in messages], ['mensaje 12', 'mensaje 13', 'mensaje 14', 'y el siguiente?'])
 
     def test_history_disabled(self):
         self.chat.side_effect = [_text('ok')]

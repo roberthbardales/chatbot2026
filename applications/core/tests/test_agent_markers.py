@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
 
-from ..agent import AgentError, AgentRejected, answer_with_agent, render_markers, run_tool
+from ..agent import AgentError, AgentRejected, answer_with_agent, render_markers, requested_figures, run_tool
 from ..models import Product
 
 
@@ -113,6 +113,24 @@ class RenderMarkersTests(SimpleTestCase):
         self.assertEqual(self.render('{precio:A-100} o {precio:A-100}'), 'S/ 70.00 o S/ 70.00')
 
 
+def agent_tools():
+    from ..agent import TOOLS
+    return TOOLS
+
+
+class RequestedFiguresTests(SimpleTestCase):
+    def test_detection(self):
+        cases = {
+            'cuánto cuesta?': {'precio'}, 'precio del toner': {'precio'}, 'cuál es el más barato?': {'precio'},
+            'y cuánto stock hay del primero?': {'stock'}, 'cuántas unidades quedan': {'stock'},
+            'hay disponible?': {'stock'}, 'precio y stock': {'precio', 'stock'}, 'cuánto es?': {'precio'},
+            'tienes protector solar?': set(), 'para qué sirve?': set(), 'hay protector?': set(),
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(requested_figures(question), expected)
+
+
 class PriceToolTests(TestCase):
     def setUp(self):
         for sku, name, price in (('P-1', 'Crema cara', '120.00'), ('P-2', 'Crema barata', '30.00'),
@@ -168,15 +186,51 @@ class MarkerFlowTests(TestCase):
         answer = answer_with_agent(self.conversation, 'cuál es la crema más barata?')
         self.assertEqual(str(answer), 'La más barata es *Crema barata*: S/ 30.00 y hay 3 unidades.')
 
-    def test_a_sku_not_returned_in_this_message_is_rejected(self):
-        self.chat.side_effect = [_text('Cuesta {precio:P-2}')]
+    def test_a_sku_not_returned_in_this_message_is_rejected_even_after_the_retry(self):
+        self.chat.side_effect = [_text('Cuesta {precio:P-2}'), _text('Cuesta {precio:P-2}')]
+        with self.assertRaises(AgentRejected):
+            answer_with_agent(self.conversation, 'cuánto cuesta la crema barata?')
+        self.assertEqual(self.chat.call_count, 2)
+
+    def test_a_made_up_price_is_rejected_even_after_the_retry(self):
+        bad = _text('La *Crema barata* cuesta S/ 25.00')
+        self.chat.side_effect = [_call('ver_producto', {'sku': 'P-2'}), bad, bad]
         with self.assertRaises(AgentRejected):
             answer_with_agent(self.conversation, 'cuánto cuesta la crema barata?')
 
-    def test_a_made_up_price_is_rejected(self):
-        self.chat.side_effect = [_call('ver_producto', {'sku': 'P-2'}), _text('La *Crema barata* cuesta S/ 25.00')]
+    def test_the_retry_can_fix_a_stock_answer_given_from_memory(self):
+        history = [{'role': 'assistant', 'content': '1. *Crema barata*\n2. *Crema cara* está agotada'}]
+        self.chat.side_effect = [_text('La *Crema barata* está agotada.'),
+                                 _call('ver_producto', {'nombre': 'Crema barata'}),
+                                 _text('De la *Crema barata** {stock:P-2}.')]
+        answer = answer_with_agent(self.conversation, 'y cuánto stock hay de la primera?', history)
+        self.assertEqual(str(answer), 'De la *Crema barata* hay 3 unidades.')
+        notices = [m for m in self.chat.call_args_list[1].args[1] if '[Aviso del sistema]' in str(m.get('content'))]
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0]['role'], 'user')
+        self.assertIn('stock', notices[0]['content'])
+        self.assertEqual(self.chat.call_args_list[1].args[2], agent_tools())
+
+    def test_a_price_question_without_a_marker_is_rejected_when_products_were_found(self):
+        self.chat.side_effect = [_call('buscar_productos', {'consulta': 'crema'}),
+                                 _text('Tengo dos cremas muy buenas'),
+                                 _text('Tengo dos cremas muy buenas')]
+        with self.assertRaises(AgentRejected) as caught:
+            answer_with_agent(self.conversation, 'qué precio tienen las cremas?')
+        self.assertEqual(caught.exception.reason, 'missing_requested_figure')
+
+    def test_no_marker_is_needed_when_the_search_found_nothing(self):
+        self.chat.side_effect = [_call('buscar_productos', {'consulta': 'labial mate'}),
+                                 _text('No encontré ese producto. ¿Me das la marca?')]
+        answer = answer_with_agent(self.conversation, 'cuánto cuesta el labial mate?')
+        self.assertIn('No encontré', answer)
+        self.assertEqual(self.chat.call_count, 2)
+
+    def test_the_retry_happens_only_once(self):
+        self.chat.side_effect = [_text('Cuesta 10.00'), _text('Cuesta 11.00'), _text('{precio:P-2}')]
         with self.assertRaises(AgentRejected):
-            answer_with_agent(self.conversation, 'cuánto cuesta la crema barata?')
+            answer_with_agent(self.conversation, 'hola')
+        self.assertEqual(self.chat.call_count, 2)
 
     def test_the_price_marker_works_after_looking_up_by_name(self):
         self.chat.side_effect = [_call('ver_producto', {'nombre': 'Crema cara'}), _text('Está en {precio:P-1} y {stock:P-1}.')]
@@ -189,6 +243,6 @@ class MarkerFlowTests(TestCase):
         self.assertEqual(str(answer_with_agent(self.conversation, 'cuántas había?', history)), 'Sí, son esas 3 unidades a S/ 30.00.')
 
     def test_rejection_is_an_agent_error_so_the_caller_can_fall_back(self):
-        self.chat.side_effect = [_text('Cuesta 10.00')]
+        self.chat.side_effect = [_text('Cuesta 10.00'), _text('Cuesta 10.00')]
         with self.assertRaises(AgentError):
             answer_with_agent(self.conversation, 'precio?')
