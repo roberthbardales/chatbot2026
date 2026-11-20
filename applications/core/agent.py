@@ -128,7 +128,10 @@ def _summary(product):
 def _listing(products, seen):
     shown = products[:settings.MAX_PRODUCTS_IN_CONTEXT]
     seen.update({product['sku']: product for product in shown})
-    return {'total': len(products), 'mostrados': len(shown), 'productos': [_summary(product) for product in shown]}
+    result = {'total': len(products), 'mostrados': len(shown), 'productos': [_summary(product) for product in shown]}
+    if len(products) > len(shown):
+        result['nota'] = f'Hay {len(products)} productos en total y solo ves {len(shown)}: díselo al cliente.'
+    return result
 
 
 def _text_argument(arguments, name):
@@ -306,6 +309,19 @@ def _clean_history(history):
     return cleaned[-max(0, settings.AI_HISTORY_MESSAGES):] if settings.AI_HISTORY_MESSAGES > 0 else []
 
 
+def _with_total_note(text, truncated):
+    """Si la respuesta lista productos de una búsqueda con más resultados y no dice el total, lo añade el servidor."""
+    if not truncated:
+        return text
+    total, names = truncated
+    normalized = normalize_text(text)
+    listed = sum(1 for name in names if normalize_text(name)[:30] in normalized)
+    if listed < 2 or re.search(rf'(?<![\d.,]){total}(?![\d.,])', text):
+        return text
+    return (f'{text}\n\nHay {total} productos en total y te muestro {len(names)}. '
+            'Si me dices la marca, el tipo o el tamaño, afino la búsqueda 😉')
+
+
 def _inventory_context(conversation, seen):
     """Contexto que entiende el motor de respaldo: un producto, una lista de opciones o el anterior."""
     if len(seen) == 1:
@@ -331,6 +347,7 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
     earlier = ' '.join(message['content'] for message in previous)
     messages = previous + [{'role': 'user', 'content': question}]
     seen = {}
+    truncated = None
     executed = 0
     retried = False
     limit = max(0, settings.AI_AGENT_MAX_TOOL_CALLS)
@@ -350,8 +367,8 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
                 # Precio y stock solo salen de un marcador; salvo que ya se buscó y no hubo ningún producto.
                 if requested_figures(question) - answered and (executed == 0 or seen):
                     raise AgentRejected('missing_requested_figure', reply['content'])
-                return InventoryAnswer(render_markers(reply['content'], seen, question, earlier),
-                                       _inventory_context(conversation, seen))
+                rendered = render_markers(reply['content'], seen, question, earlier)
+                return InventoryAnswer(_with_total_note(rendered, truncated), _inventory_context(conversation, seen))
             except AgentRejected as exc:
                 logger.warning('Agent answer rejected: reason=%s retried=%s', exc.reason, retried)
                 if retried:
@@ -368,6 +385,8 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
             if executed < limit:
                 result = run_tool(call['name'], call['arguments'], seen)
                 executed += 1
+                if result.get('productos') and 'nota' in result:
+                    truncated = (result['total'], [product['nombre'] for product in result['productos']])
                 logger.info('Agent tool: name=%s ok=%s', call['name'], 'error' not in result)
             else:
                 result = {'error': 'Se alcanzó el máximo de consultas para este mensaje.'}

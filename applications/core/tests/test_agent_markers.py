@@ -118,6 +118,44 @@ def agent_tools():
     return TOOLS
 
 
+@override_settings(AI_AGENT_MAX_TOOL_CALLS=4, AI_HISTORY_MESSAGES=10, MAX_PRODUCTS_IN_CONTEXT=2)
+class TotalNoteTests(TestCase):
+    NOTE = 'Hay 3 productos en total y te muestro 2.'
+
+    def setUp(self):
+        for index in (1, 2, 3):
+            Product.objects.create(sku=f'S-{index}', name=f'Serum Anua {index}', category='Sérum', price='10.00', stock=2)
+        self.chat = patch('applications.core.agent.chat_with_tools').start()
+        self.addCleanup(patch.stopall)
+        self.conversation = SimpleNamespace(provider='openrouter')
+
+    def ask(self, final_text, question='tienes serum?', consulta='serum'):
+        self.chat.side_effect = [_call('buscar_productos', {'consulta': consulta}), _text(final_text)]
+        return str(answer_with_agent(self.conversation, question))
+
+    def test_the_tool_tells_the_model_the_total(self):
+        result = run_tool('buscar_productos', {'consulta': 'serum'}, {})
+        self.assertIn('3 productos en total', result['nota'])
+        self.assertNotIn('nota', run_tool('buscar_productos', {'consulta': 'serum anua 1'}, {}))
+
+    def test_the_server_adds_the_total_when_the_model_forgets_it(self):
+        answer = self.ask('Tengo estos:\n1. *Serum Anua 1*\n2. *Serum Anua 2*\n¿Cuál te interesa?')
+        self.assertTrue(answer.endswith('Si me dices la marca, el tipo o el tamaño, afino la búsqueda 😉'))
+        self.assertIn(self.NOTE, answer)
+
+    def test_no_note_when_the_answer_already_says_the_total(self):
+        answer = self.ask('Hay 3 en total. Te muestro *Serum Anua 1* y *Serum Anua 2*.')
+        self.assertNotIn('afino la búsqueda', answer)
+
+    def test_no_note_when_the_answer_is_about_a_single_product(self):
+        answer = self.ask('El *Serum Anua 1* es el más sencillo.')
+        self.assertNotIn('en total', answer)
+
+    def test_no_note_when_everything_fits(self):
+        answer = self.ask('Solo tengo *Serum Anua 1*.', consulta='serum anua 1')
+        self.assertNotIn('en total', answer)
+
+
 class RequestedFiguresTests(SimpleTestCase):
     def test_detection(self):
         cases = {
