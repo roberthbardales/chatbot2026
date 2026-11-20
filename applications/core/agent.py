@@ -92,9 +92,11 @@ class AgentError(Exception):
 class AgentRejected(AgentError):
     """El validador rechazó el texto de la IA (cifras escritas a mano, marcadores inválidos…)."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, text=''):
         super().__init__(reason)
         self.reason = reason
+        # Texto rechazado, solo para depurar en pruebas locales: no se escribe en los logs.
+        self.text = text
 
 
 def _short(value, maximum):
@@ -224,35 +226,36 @@ def _numbers(text):
     return {number.replace(',', '.') for number in re.findall(r'\d+(?:[.,]\d+)?', text or '')}
 
 
-def render_markers(text, seen, question=''):
+def render_markers(text, seen, question='', earlier=''):
     """Sustituye los marcadores por los datos de la base y valida el texto de la IA.
 
     Lanza AgentRejected si hay marcadores con SKU no consultados en este mensaje, llaves sueltas, cifras de
-    precio o stock escritas a mano (salvo las que el propio cliente escribió), SKU visibles o un texto vacío o largo.
+    precio o stock escritas a mano, SKU visibles o un texto vacío o largo. Se aceptan las cifras que ya
+    aparecen en el mensaje del cliente o en la conversación previa (`earlier`): el cliente las vio o las escribió.
     La validación es heurística: reduce mucho el riesgo, pero no es una prueba formal."""
     text = (text or '').replace('**', '*').strip()
     markers = _MARKER.findall(text)
     for _kind, sku in markers:
         if sku not in seen:
-            raise AgentRejected('unknown_sku')
+            raise AgentRejected('unknown_sku', text)
     masked = _MARKER.sub(' ', text)
     if '{' in masked or '}' in masked:
-        raise AgentRejected('stray_braces')
-    allowed = _numbers(question)
+        raise AgentRejected('stray_braces', text)
+    allowed = _numbers(question) | _numbers(earlier)
     for pattern in _HAND_WRITTEN:
         for match in pattern.finditer(masked):
             if match.group('n').replace(',', '.') not in allowed:
-                raise AgentRejected('hand_written_figure')
+                raise AgentRejected('hand_written_figure', text)
     for sku in seen:
         if len(sku) >= 4 and re.search(r'(?<![\w-])' + re.escape(sku) + r'(?![\w-])', masked):
-            raise AgentRejected('visible_sku')
+            raise AgentRejected('visible_sku', text)
     if re.search(r'\d{9,}', masked):
-        raise AgentRejected('visible_identifier')
+        raise AgentRejected('visible_identifier', text)
     result = _MARKER.sub(lambda match: _marker_value(match.group(1), seen[match.group(2)]), text)
     if not result.strip():
-        raise AgentRejected('empty')
+        raise AgentRejected('empty', text)
     if len(result) > _MAX_ANSWER_CHARACTERS:
-        raise AgentRejected('too_long')
+        raise AgentRejected('too_long', text)
     return result
 
 
@@ -279,7 +282,9 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
         question = f'{question}\n[El cliente envió una imagen; parece ser: {image_keywords}]'.strip()
     if not question:
         raise AgentError('Mensaje vacío')
-    messages = _clean_history(history) + [{'role': 'user', 'content': question}]
+    previous = _clean_history(history)
+    earlier = ' '.join(message['content'] for message in previous)
+    messages = previous + [{'role': 'user', 'content': question}]
     seen = {}
     executed = 0
     limit = max(0, settings.AI_AGENT_MAX_TOOL_CALLS)
@@ -294,7 +299,7 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
             if not reply['content']:
                 raise AgentError('La IA no devolvió texto')
             try:
-                return InventoryAnswer(render_markers(reply['content'], seen, question), {})
+                return InventoryAnswer(render_markers(reply['content'], seen, question, earlier), {})
             except AgentRejected as exc:
                 logger.warning('Agent answer rejected: reason=%s', exc.reason)
                 raise

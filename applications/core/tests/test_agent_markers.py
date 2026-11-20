@@ -97,6 +97,18 @@ class RenderMarkersTests(SimpleTestCase):
             with self.subTest(length=len(text)), self.assertRaises(AgentRejected):
                 self.render(text)
 
+    def test_figures_already_shown_in_the_conversation_may_be_repeated(self):
+        earlier = 'Cuesta S/ 47.92 y hay 13 unidades.'
+        self.assertEqual(render_markers('Como te dije, hay 13 unidades a S/ 47.92', self.seen, '', earlier),
+                         'Como te dije, hay 13 unidades a S/ 47.92')
+        with self.assertRaises(AgentRejected):
+            render_markers('Hay 14 unidades', self.seen, '', earlier)
+
+    def test_rejection_keeps_the_text_for_local_debugging(self):
+        with self.assertRaises(AgentRejected) as caught:
+            self.render('Cuesta {precio:ZZZ}')
+        self.assertEqual(caught.exception.text, 'Cuesta {precio:ZZZ}')
+
     def test_a_product_can_be_mentioned_twice(self):
         self.assertEqual(self.render('{precio:A-100} o {precio:A-100}'), 'S/ 70.00 o S/ 70.00')
 
@@ -169,6 +181,12 @@ class MarkerFlowTests(TestCase):
     def test_the_price_marker_works_after_looking_up_by_name(self):
         self.chat.side_effect = [_call('ver_producto', {'nombre': 'Crema cara'}), _text('Está en {precio:P-1} y {stock:P-1}.')]
         self.assertEqual(str(answer_with_agent(self.conversation, 'y la cara?')), 'Está en S/ 120.00 y está agotado.')
+
+    def test_figures_from_the_history_are_not_rejected(self):
+        history = [{'role': 'user', 'content': 'la más barata?'},
+                   {'role': 'assistant', 'content': 'La *Crema barata* cuesta S/ 30.00 y hay 3 unidades.'}]
+        self.chat.side_effect = [_text('Sí, son esas 3 unidades a S/ 30.00.')]
+        self.assertEqual(str(answer_with_agent(self.conversation, 'cuántas había?', history)), 'Sí, son esas 3 unidades a S/ 30.00.')
 
     def test_rejection_is_an_agent_error_so_the_caller_can_fall_back(self):
         self.chat.side_effect = [_text('Cuesta 10.00')]
