@@ -13,6 +13,7 @@ from django.conf import settings
 from .inventory import category_products, normalize_text, product_by_sku, search_products
 from .providers import OPENROUTER, ProviderError, chat_with_tools
 from .responses import InventoryAnswer, stock_text
+from .services import latest_inventory_context
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +306,16 @@ def _clean_history(history):
     return cleaned[-max(0, settings.AI_HISTORY_MESSAGES):] if settings.AI_HISTORY_MESSAGES > 0 else []
 
 
+def _inventory_context(conversation, seen):
+    """Contexto que entiende el motor de respaldo: un producto, una lista de opciones o el anterior."""
+    if len(seen) == 1:
+        return {'selected_sku': next(iter(seen))}
+    if seen:
+        return {'candidates': list(seen)[:settings.MAX_PRODUCTS_IN_CONTEXT]}
+    # Sin productos nuevos (un saludo, por ejemplo) se conserva lo que el cliente ya estaba mirando.
+    return latest_inventory_context(getattr(conversation, 'messages', None))
+
+
 def answer_with_agent(conversation, text, history=None, image_keywords=None):
     """Responde conversando con la IA y las herramientas. Lanza AgentError si no consigue una respuesta válida.
 
@@ -339,7 +350,8 @@ def answer_with_agent(conversation, text, history=None, image_keywords=None):
                 # Precio y stock solo salen de un marcador; salvo que ya se buscó y no hubo ningún producto.
                 if requested_figures(question) - answered and (executed == 0 or seen):
                     raise AgentRejected('missing_requested_figure', reply['content'])
-                return InventoryAnswer(render_markers(reply['content'], seen, question, earlier), {})
+                return InventoryAnswer(render_markers(reply['content'], seen, question, earlier),
+                                       _inventory_context(conversation, seen))
             except AgentRejected as exc:
                 logger.warning('Agent answer rejected: reason=%s retried=%s', exc.reason, retried)
                 if retried:

@@ -105,8 +105,8 @@ class AgentLoopTests(AgentTestCase):
                                  _text('Tengo el Anua Protector Solar 😊')]
         answer = answer_with_agent(self.conversation, 'tienes protector solar?')
         self.assertEqual(str(answer), 'Tengo el Anua Protector Solar 😊')
-        self.assertEqual(answer.inventory_context, {})
-        second = self.chat.call_args_list[1].args[1]
+        self.assertEqual(answer.inventory_context, {'selected_sku': 'SUN-1'})
+        second =self.chat.call_args_list[1].args[1]
         self.assertEqual([m['role'] for m in second], ['user', 'assistant', 'tool'])
         result = json.loads(second[-1]['content'])
         self.assertEqual(result['productos'][0]['sku'], 'SUN-1')
@@ -123,6 +123,26 @@ class AgentLoopTests(AgentTestCase):
         self.assertEqual(provider, 'openrouter')
         self.assertEqual({tool['function']['name'] for tool in tools}, {'buscar_productos', 'ver_producto', 'listar_categoria'})
         self.assertIn('TopBeauty', system)
+
+    def test_context_for_the_fallback_engine(self):
+        self.chat.side_effect = [_call('buscar_productos', {'consulta': 'anua'}), _text('Tengo dos')]
+        self.assertEqual(answer_with_agent(self.conversation, 'anua').inventory_context,
+                         {'candidates': ['SUN-1', 'TON-1']})
+
+    def test_a_greeting_keeps_the_previous_context(self):
+        class History:
+            def filter(self, **kwargs):
+                return self
+
+            def order_by(self, *args):
+                return self
+
+            def first(self):
+                return SimpleNamespace(inventory_context={'selected_sku': 'SUN-1'})
+
+        self.chat.side_effect = [_text('¡Hola!')]
+        conversation = SimpleNamespace(provider='openrouter', messages=History())
+        self.assertEqual(answer_with_agent(conversation, 'gracias').inventory_context, {'selected_sku': 'SUN-1'})
 
     def test_prompt_keeps_the_safety_and_format_rules(self):
         prompt = agent.SYSTEM_PROMPT

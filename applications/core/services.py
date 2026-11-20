@@ -89,6 +89,22 @@ def _sheet_context_choice(context, text):
     return None
 
 
+IMAGE_PLACEHOLDER = 'El usuario envió una imagen.'
+_VISION_PROMPT = '''Analiza la imagen para buscar un producto en un catálogo de cosmética y cuidado de la piel.
+Devuelve únicamente entre 3 y 8 palabras clave concretas que describan el producto visible:
+tipo de producto (sérum, limpiador, protector solar, labial…), marca, nombre, función o ingrediente
+y tamaño (por ejemplo 50ml) si son legibles.
+No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamente: desconocido.'''
+
+
+def image_keywords(provider, image_data_url):
+    """Palabras clave del producto que se ve en la imagen, o «desconocido» si no se puede identificar."""
+    try:
+        return generate_response(provider or OPENROUTER, _VISION_PROMPT, image_data_url=image_data_url)
+    except ProviderError:
+        return 'desconocido'
+
+
 def answer_sheet_message(conversation, text, image_data_url=None):
     context = latest_inventory_context(getattr(conversation, 'messages', None))
     if not image_data_url:
@@ -98,23 +114,11 @@ def answer_sheet_message(conversation, text, image_data_url=None):
             return InventoryAnswer(reply, context)
     search_text = text
     if image_data_url:
-        vision_prompt = '''Analiza la imagen para buscar un producto en un catálogo de cosmética y cuidado de la piel.
-Devuelve únicamente entre 3 y 8 palabras clave concretas que describan el producto visible:
-tipo de producto (sérum, limpiador, protector solar, labial…), marca, nombre, función o ingrediente
-y tamaño (por ejemplo 50ml) si son legibles.
-No inventes SKU, precio ni stock. Si no puedes identificarlo, devuelve exactamente: desconocido.'''
-        try:
-            visual_description = generate_response(
-                conversation.provider or OPENROUTER,
-                vision_prompt,
-                image_data_url=image_data_url,
-            )
-        except ProviderError:
-            visual_description = 'desconocido'
-        if visual_description.strip().lower() == 'desconocido' and text.strip() in {'', 'El usuario envió una imagen.'}:
+        visual_description = image_keywords(conversation.provider, image_data_url)
+        if visual_description.strip().lower() == 'desconocido' and text.strip() in {'', IMAGE_PLACEHOLDER}:
             return _sheet_not_found(image_data_url)
         if visual_description.strip().lower() != 'desconocido':
-            search_text = visual_description if text.strip() in {'', 'El usuario envió una imagen.'} else f'{text} {visual_description}'.strip()
+            search_text = visual_description if text.strip() in {'', IMAGE_PLACEHOLDER} else f'{text} {visual_description}'.strip()
     sku_match = re.search(r'\b(?:sku|c[oó]digo|referencia)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]*)', text, re.I)
     if sku_match and sku_match.group(1).lower() in {'tiene', 'es', 'de', 'su', 'precio', 'stock', 'del'}:
         sku_match = None

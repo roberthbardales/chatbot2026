@@ -8,9 +8,10 @@ from django.db import models, transaction
 from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
+from applications.core.agent import AgentError, answer_with_agent
 from applications.core.providers import OPENROUTER, ProviderError
 from applications.core.responses import InventoryAnswer
-from applications.core.services import answer_sheet_message, latest_inventory_context
+from applications.core.services import IMAGE_PLACEHOLDER, answer_sheet_message, image_keywords, latest_inventory_context
 from applications.core.limits import LimitExceeded, enforce_rates, identity, principal_slot
 
 from .meta_api import MAX_TEXT_LENGTH, WhatsAppAPIError, download_media_data, send_text_message
@@ -198,6 +199,50 @@ def _human_mode(contact_pk):
     return WhatsAppContact.objects.filter(pk=contact_pk, mode=WhatsAppContact.HUMAN).exists()
 
 
+def _agent_history(contact, batch):
+    """Últimos mensajes del contacto anteriores al lote actual, como {'role', 'content'} en orden cronológico.
+
+    Las respuestas de un operador cuentan como del asistente. No incluye mensajes aún pendientes ni los avisos de error."""
+    limit = max(0, settings.AI_HISTORY_MESSAGES)
+    if not limit or not batch:
+        return []
+    # Se ordena por `pk` (orden de inserción) y no por `created_at`: dos mensajes seguidos pueden compartir
+    # la misma marca de tiempo si el reloj tiene poca resolución.
+    rows = WhatsAppMessage.objects.filter(
+        contact=contact, pk__lt=min(item.pk for item in batch),
+    ).exclude(pk__in=[item.pk for item in batch]).exclude(
+        status__in=(WhatsAppMessage.PENDING, WhatsAppMessage.PROCESSING),
+    ).exclude(is_from_customer=False, text=PROCESSING_ERROR).order_by('-pk')[:limit]
+    history = []
+    for row in reversed(list(rows)):
+        content = row.text or ('[El cliente envió una imagen]' if row.media_id else '')
+        if content:
+            history.append({'role': 'user' if row.is_from_customer else 'assistant', 'content': content})
+    return history
+
+
+def _generate_response(contact, batch, text, image_data_url):
+    """Responde con el agente si está activado y, si falla o no puede responder, con el motor de plantillas."""
+    provider = settings.WHATSAPP_DEFAULT_PROVIDER or OPENROUTER
+    conversation = SimpleNamespace(provider=provider, messages=contact.messages)
+    if settings.AI_AGENT_ENABLED:
+        try:
+            agent_text, keywords = text, None
+            if image_data_url:
+                found = (image_keywords(provider, image_data_url) or '').strip()
+                keywords = None if found.lower() == 'desconocido' else found
+                if text == IMAGE_PLACEHOLDER:
+                    agent_text = '' if keywords else 'El cliente envió una imagen que no se pudo identificar.'
+            return answer_with_agent(conversation, agent_text, _agent_history(contact, batch), keywords)
+        except LimitExceeded:
+            raise
+        except AgentError as exc:
+            logger.warning('Agent could not answer, using the template engine: %s', exc)
+        except Exception:
+            logger.exception('Unexpected agent error, using the template engine')
+    return answer_sheet_message(conversation, text, image_data_url=image_data_url)
+
+
 def process_pending_messages(force=False, max_contacts=None, progress_callback=None, after_contact=None):
     _recover_abandoned_messages(progress_callback=progress_callback)
     cutoff = timezone.now() if force else timezone.now() - timedelta(seconds=settings.MESSAGE_DEBOUNCE_SECONDS)
@@ -261,11 +306,7 @@ def process_pending_messages(force=False, max_contacts=None, progress_callback=N
             continue
         try:
             with principal_slot(identity('whatsapp', message.contact.phone_number)):
-                conversation = SimpleNamespace(
-                    provider=settings.WHATSAPP_DEFAULT_PROVIDER or OPENROUTER,
-                    messages=message.contact.messages,
-                )
-                response = answer_sheet_message(conversation, text, image_data_url=image_data_url)
+                response = _generate_response(message.contact, messages, text, image_data_url)
         except LimitExceeded as exc:
             if exc.code == 'context_limit':
                 count += int(_finish_processing(messages, token, PROCESSING_ERROR, failed=True))
