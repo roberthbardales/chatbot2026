@@ -112,6 +112,26 @@ def _shorten(text, maximum):
     return text if len(text) <= maximum else text[:maximum].rsplit(' ', 1)[0] + '…'
 
 
+def stock_text(product):
+    """Frase de stock de un producto («hay 5 unidades», «está agotado»…), o None si no hay dato."""
+    value = product.get('stock')
+    if value is None or value == '':
+        if product.get('available') is True:
+            # La hoja dice «Disponible» pero no trae cantidad: no se inventa un número.
+            return 'está disponible; consulta la cantidad exacta'
+        if product.get('available') is False:
+            return 'está agotado'
+        return None
+    if value == 0:
+        return 'está agotado'
+    if product.get('unit'):
+        unit = product['unit']
+        if value == 1 and unit.lower() == 'unidades':
+            unit = 'unidad'
+        value = f'{value} {unit}'
+    return _FIELD_PHRASES['stock'][0].format(value=value)
+
+
 def _render_sheet_selection(selection, from_image, descriptions=None):
     """`descriptions` (sku -> texto) trae la respuesta ya redactada sobre la descripción de un producto."""
     descriptions = descriptions or {}
@@ -124,24 +144,13 @@ def _render_sheet_selection(selection, from_image, descriptions=None):
                 continue
             key, _label = _SHEET_FIELDS[field]
             present, missing = _FIELD_PHRASES[field]
+            if field == 'stock':
+                parts.append(stock_text(product) or missing)
+                continue
             value = product.get(key)
             if value is None or value == '':
-                if field == 'stock' and product.get('available') is True:
-                    # La hoja dice «Disponible» pero no trae cantidad: no se inventa un número.
-                    parts.append('está disponible; consulta la cantidad exacta')
-                elif field == 'stock' and product.get('available') is False:
-                    parts.append('está agotado')
-                else:
-                    parts.append(missing)
+                parts.append(missing)
                 continue
-            if field == 'stock' and value == 0:
-                parts.append('está agotado')
-                continue
-            if field == 'stock' and product.get('unit'):
-                unit = product['unit']
-                if value == 1 and unit.lower() == 'unidades':
-                    unit = 'unidad'
-                value = f'{value} {unit}'
             if field == 'descripcion':
                 value = _shorten(str(value), _MAX_LITERAL_DESCRIPTION)
             parts.append(present.format(value=value))

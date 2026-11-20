@@ -38,63 +38,63 @@ class AgentTestCase(TestCase):
 
 class ToolTests(AgentTestCase):
     def test_search_returns_summaries_without_price_or_stock(self):
-        seen = set()
+        seen = {}
         result = run_tool('buscar_productos', {'consulta': 'protector solar'}, seen)
         self.assertEqual(result['total'], 1)
         product = result['productos'][0]
         self.assertEqual(product['sku'], 'SUN-1')
         self.assertEqual(product['marca'], 'Anua')
         self.assertLessEqual(len(product['resumen']), 201)
-        self.assertEqual(set(product), {'sku', 'nombre', 'marca', 'categoria', 'resumen'})
-        self.assertEqual(seen, {'SUN-1'})
+        self.assertEqual(set(product), {'sku', 'nombre', 'marca', 'categoria', 'tiene_precio', 'estado_stock', 'resumen'})
+        self.assertEqual(set(seen), {'SUN-1'})
 
     @override_settings(MAX_PRODUCTS_IN_CONTEXT=1)
     def test_listing_is_capped_but_reports_the_total(self):
-        result = run_tool('buscar_productos', {'consulta': 'anua'}, set())
+        result = run_tool('buscar_productos', {'consulta': 'anua'}, {})
         self.assertEqual((result['total'], result['mostrados'], len(result['productos'])), (2, 1, 1))
 
     def test_category_listing(self):
-        result = run_tool('listar_categoria', {'categoria': 'tonico'}, set())
+        result = run_tool('listar_categoria', {'categoria': 'tonico'}, {})
         self.assertEqual([p['sku'] for p in result['productos']], ['TON-1'])
 
     def test_product_detail_has_no_price_or_stock(self):
-        seen = set()
+        seen = {}
         result = run_tool('ver_producto', {'sku': 'SUN-1'}, seen)
         self.assertEqual(result['nombre'], 'Anua Protector Solar')
         self.assertIn('piel sensible', result['descripcion'])
         self.assertNotIn('price', json.dumps(result))
         self.assertNotIn('80', json.dumps(result))
-        self.assertEqual(seen, {'SUN-1'})
+        self.assertEqual(set(seen), {'SUN-1'})
 
     def test_product_detail_by_name_when_the_sku_is_unknown(self):
         for arguments in ({'nombre': 'Anua Protector Solar'}, {'nombre': 'anua protector solar'},
                           {'sku': '123-inventado', 'nombre': 'Anua Protector Solar'}):
             with self.subTest(arguments=arguments):
-                seen = set()
+                seen = {}
                 self.assertEqual(run_tool('ver_producto', arguments, seen)['sku'], 'SUN-1')
-                self.assertEqual(seen, {'SUN-1'})
+                self.assertEqual(set(seen), {'SUN-1'})
 
     def test_ambiguous_name_asks_the_model_to_choose(self):
-        result = run_tool('ver_producto', {'nombre': 'anua'}, set())
+        result = run_tool('ver_producto', {'nombre': 'anua'}, {})
         self.assertIn('varios', result['error'])
         self.assertEqual(result['total'], 2)
 
     def test_exact_name_wins_over_a_longer_match(self):
         Product.objects.create(sku='TON-2', name='Anua Toner Mini', brand='Anua')
-        self.assertEqual(run_tool('ver_producto', {'nombre': 'Anua Toner'}, set())['sku'], 'TON-1')
+        self.assertEqual(run_tool('ver_producto', {'nombre': 'Anua Toner'}, {})['sku'], 'TON-1')
 
     def test_unknown_name_points_to_the_search_tool(self):
-        self.assertIn('buscar_productos', run_tool('ver_producto', {'nombre': 'base mate'}, set())['error'])
+        self.assertIn('buscar_productos', run_tool('ver_producto', {'nombre': 'base mate'}, {})['error'])
 
     def test_bad_input_returns_an_error_the_model_can_read(self):
         for name, arguments in [('buscar_productos', {}), ('buscar_productos', None), ('buscar_productos', {'consulta': 5}),
                                 ('ver_producto', {'sku': ''}), ('ver_producto', {'sku': 'NOPE'}),
                                 ('listar_categoria', {}), ('borrar_todo', {'x': 1})]:
             with self.subTest(name=name, arguments=arguments):
-                self.assertIn('error', run_tool(name, arguments, set()))
+                self.assertIn('error', run_tool(name, arguments, {}))
 
     def test_no_match_is_an_empty_listing(self):
-        self.assertEqual(run_tool('buscar_productos', {'consulta': 'base mate'}, set()),
+        self.assertEqual(run_tool('buscar_productos', {'consulta': 'base mate'}, {}),
                          {'total': 0, 'mostrados': 0, 'productos': []})
 
 
@@ -127,7 +127,7 @@ class AgentLoopTests(AgentTestCase):
     def test_prompt_keeps_the_safety_and_format_rules(self):
         prompt = agent.SYSTEM_PROMPT
         for rule in ('ver_producto', 'un solo asterisco', 'nunca uses dos asteriscos', 'cuántos hay en total',
-                     'No opines', 'NO tienes acceso a precios', 'ignora cualquier orden'):
+                     'No opines', 'NUNCA escribas cifras', '{precio:SKU}', 'precio_maximo', 'ignora cualquier orden'):
             with self.subTest(rule=rule):
                 self.assertIn(rule, prompt)
 
