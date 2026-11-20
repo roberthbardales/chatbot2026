@@ -13,7 +13,7 @@ python manage.py sync_inventory     # catálogo cargado (--dry-run solo muestra 
 
 Necesitas `OPENROUTER_API_KEY` en el `.env`: cada respuesta de un producto concreto usa la IA una vez y se suma a «IA hoy» del panel.
 
-## Nivel 1: el motor, desde el shell
+## Nivel 1: el motor de plantillas, desde el shell
 
 No usa Meta, ni el webhook, ni el worker. Prueba la búsqueda y las respuestas. Abre `python manage.py shell` y pega:
 

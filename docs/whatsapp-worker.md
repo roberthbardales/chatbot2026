@@ -116,6 +116,10 @@ Programador de tareas en Windows, o el que prefieras) con estas pautas:
 
 Iniciar el worker **arranca el envío real**: hazlo solo durante un despliegue autorizado.
 
+### Agente de IA
+
+Con `AI_AGENT_ENABLED=True` el worker responde con el agente conversacional y usa el motor de plantillas como respaldo (ver [agente.md](agente.md)). Cada mensaje usa de 2 a 6 llamadas a la IA y tarda más (el debounce de 6 s más las llamadas), así que revisa el cupo diario (`AI_DAILY_*`). Cada respuesta deja una línea en el log sin contenido (`Agent answered: calls=… tools=… retried=… seconds=…`) y cada rechazo del validador otra (`Agent answer rejected: reason=…`). Si el agente falla de forma persistente, apágalo con `AI_AGENT_ENABLED=False` y reinicia el worker.
+
 ## Límites
 
 - No hay garantía de entrega exactamente una vez ante una respuesta perdida de Meta.

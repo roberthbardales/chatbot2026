@@ -1,6 +1,6 @@
 # Cómo funciona el chatbot
 
-Guía del flujo completo, desde que el catálogo entra al sistema hasta que el cliente recibe su respuesta por WhatsApp. Está escrita a partir del código actual (revisión 2026-11-17); no certifica el estado de producción. Para el detalle técnico por módulo consulta [docs/arquitectura.md](docs/arquitectura.md).
+Guía del flujo completo, desde que el catálogo entra al sistema hasta que el cliente recibe su respuesta por WhatsApp. Está escrita a partir del código actual (revisión 2026-11-19); no certifica el estado de producción. Para el detalle técnico por módulo consulta [docs/arquitectura.md](docs/arquitectura.md).
 
 ## 1. La idea central
 
@@ -22,8 +22,9 @@ Hay dos motores de respuesta, y `AI_AGENT_ENABLED` elige cuál se usa primero:
   Tabla Product (PostgreSQL)  ◄───────────────────────────────┐
         ▲                                                      │
         │ búsqueda textual                                     │
-   answer_sheet_message  ──►  OpenRouter (IA)                  │
-        ▲        │            · elige SKU y campos (JSON)      │
+   agente / answer_sheet_message ──►  OpenRouter (IA)          │
+        ▲        │            · conversa y pide herramientas   │
+        │        │              (o elige SKU y campos, en plantillas)
         │        │            · describe imágenes              │
         │        ▼
    respuesta redactada con valores de la base de datos
@@ -101,7 +102,7 @@ Es el motor que responde cuando el agente está apagado y el respaldo cuando fal
 
 **Paso 2: imagen.** Si hay imagen, se le pide a la IA entre 3 y 8 palabras clave visibles (o `desconocido`), y se usan como texto de búsqueda. Una imagen nunca confirma un producto por sí sola: siempre se pide confirmación.
 
-**Paso 2b: saludos.** Si el mensaje es solo un saludo, un agradecimiento o una despedida («hola», «gracias», «chao»), se responde con un texto fijo, sin buscar en el catálogo ni llamar a la IA, y se conserva el contexto previo. Un mensaje que además pide algo («hola, tienes protector solar?») sigue el flujo normal.
+**Paso 2b: saludos.** (Solo en el motor de plantillas; con el agente activado, los saludos los contesta el agente.) Si el mensaje es solo un saludo, un agradecimiento o una despedida («hola», «gracias», «chao»), se responde con un texto fijo, sin buscar en el catálogo ni llamar a la IA, y se conserva el contexto previo. Un mensaje que además pide algo («hola, tienes protector solar?») sigue el flujo normal.
 
 **Paso 3: decidir de qué producto se habla**, en este orden:
 

@@ -3,6 +3,8 @@
 
 La mejora se aplica a Google Sheets/inventario local en WhatsApp. No usa embeddings.
 
+Esta guía describe el motor de plantillas (`answer_sheet_message`). El agente (`AI_AGENT_ENABLED=True`, ver [agente.md](agente.md)) usa la misma búsqueda de `inventory.py` mediante sus herramientas `buscar_productos`, `listar_categoria` y `ver_producto`, pero conversa con el historial, no usa listas numeradas ni elige con «la 2», y los precios y el stock salen de marcadores. El motor de plantillas sigue siendo su respaldo.
+
 ## Búsqueda
 
 - Se normalizan mayúsculas, acentos y un conjunto explícito de sinónimos entre el

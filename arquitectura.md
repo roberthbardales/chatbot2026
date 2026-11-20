@@ -1,13 +1,13 @@
 # Arquitectura del proyecto
 
-Revisión documental: 2026-11-17. Describe el código actual, no certifica el estado de producción. Para instalación consulta [README.md](README.md); para el detalle técnico, [docs/arquitectura.md](docs/arquitectura.md); para el flujo paso a paso, [comofunciona.md](comofunciona.md).
+Revisión documental: 2026-11-19. Describe el código actual, no certifica el estado de producción. Para instalación consulta [README.md](README.md); para el detalle técnico, [docs/arquitectura.md](docs/arquitectura.md); para el flujo paso a paso, [comofunciona.md](comofunciona.md).
 
 ## Resumen
 
 - **Problema que resuelve:** automatiza la atención de clientes por WhatsApp.
 - **Canal:** WhatsApp mediante Meta Cloud API. No hay chat web; sí un panel de operadores en `/whatsapp/`.
 - **Funciones principales:**
-  - Respuestas automáticas con IA.
+  - Respuestas automáticas con IA: motor de plantillas o, con `AI_AGENT_ENABLED=True`, un agente conversacional con herramientas de solo lectura (ver [docs/agente.md](docs/agente.md)).
   - Consulta de productos, precios y stock.
   - Soporte para mensajes de texto e imágenes.
   - Identificación visual de productos.
@@ -31,8 +31,8 @@ Revisión documental: 2026-11-17. Describe el código actual, no certifica el es
 1. **Cliente:** envía un mensaje o imagen por WhatsApp.
 2. **Meta WhatsApp:** recibe el mensaje y lo envía al webhook del sistema.
 3. **Sistema:** valida la firma y registra el mensaje en una cola.
-4. **Worker:** toma los mensajes pendientes, consulta el catálogo local y pide a la IA qué campos mostrar.
-5. **Sistema:** redacta la respuesta con los valores reales del inventario y la guarda en el `Outbox`.
+4. **Worker:** toma los mensajes pendientes y los pasa al motor de respuestas: con el agente activado, la IA conversa con el historial reciente y consulta el catálogo local mediante herramientas; con las plantillas, la IA solo elige qué campos mostrar.
+5. **Sistema:** pone los valores reales del inventario (con el agente, sustituye los marcadores `{precio:SKU}` y `{stock:SKU}` y valida el texto; si lo rechaza, responde con las plantillas) y guarda la respuesta en el `Outbox`.
 6. **Worker:** envía la respuesta al cliente mediante Meta, con reintentos.
 
 ```text
@@ -67,7 +67,7 @@ flowchart LR
 - **Meta WhatsApp Cloud API:** recepción y envío de mensajes.
 - **Webhook:** `/whatsapp/webhook/`, único punto de entrada de WhatsApp.
 - **Worker `whatsapp_worker`:** proceso independiente y obligatorio para responder.
-- **OpenRouter:** proveedor de inteligencia artificial.
+- **OpenRouter:** proveedor de inteligencia artificial (el agente usa varias llamadas por mensaje; ver los límites en [docs/usage-limits.md](docs/usage-limits.md)).
 - **Google Sheets:** fuente de productos, precios y stock.
 - **Outbox:** conserva las respuestas antes de enviarlas y permite reintentos.
 - **Panel de operadores:** `/whatsapp/`, con modo humano y envío manual (superusuario, administrador o empleado).

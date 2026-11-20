@@ -8,6 +8,7 @@ Aplicación Django para gestión de usuarios y atención automatizada de WhatsAp
 - Consulta productos, precios y stock del catálogo local sincronizado desde Google Sheets.
 - Analiza imágenes recibidas por WhatsApp y busca coincidencias reales del inventario; requiere un modelo de OpenRouter compatible con imágenes.
 - Conserva el historial de cada contacto para recordar el producto elegido.
+- **Agente conversacional (opcional, `AI_AGENT_ENABLED=True`):** la IA conversa con el historial reciente, consulta el catálogo con herramientas de solo lectura y responde en lenguaje natural. No escribe precios ni stock: usa marcadores que el servidor sustituye con los datos de la base y valida; si falla, responde el motor de plantillas. Ver [docs/agente.md](docs/agente.md).
 - Panel web para ver las conversaciones, tomar el control de un contacto (modo humano) y vigilar el sistema.
 - Utiliza Python, Django 5.2, PostgreSQL y plantillas con Tailwind Play CDN; no requiere compilación frontend.
 
@@ -44,6 +45,9 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 SYSTEM_PROMPT=Eres un asistente útil y profesional.
 GOOGLE_SHEET_PRODUCTS_CSV_URL=https://docs.google.com/spreadsheets/d/.../export?format=csv
 MAX_PRODUCTS_IN_CONTEXT=5
+# Agente conversacional con herramientas (False = responde el motor de plantillas). Ver docs/agente.md
+AI_AGENT_ENABLED=False
+AI_HISTORY_MESSAGES=10
 HISTORY_LIMIT=20
 MESSAGE_DEBOUNCE_SECONDS=6
 WHATSAPP_VERIFY_TOKEN=token-de-verificacion
@@ -119,6 +123,8 @@ El funcionamiento real depende de las credenciales, del modelo elegido y de la c
 ```powershell
 python manage.py test
 ```
+
+Las pruebas no llaman a OpenRouter ni a Meta y no dependen de tu `.env` (las del worker fijan `AI_AGENT_ENABLED=False`). Para probar el agente con la IA real, sin Meta: `python manage.py probar_agente` (gasta cupo de IA; ver [docs/probar-el-bot.md](docs/probar-el-bot.md)).
 
 También puedes ejecutar `python manage.py check` y `python manage.py makemigrations --check --dry-run`. Las pruebas requieren PostgreSQL con permisos para crear la base de pruebas; no hay configuración alternativa con SQLite.
 
