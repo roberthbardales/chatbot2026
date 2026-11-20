@@ -127,7 +127,7 @@ class AgentLoopTests(AgentTestCase):
     def test_prompt_keeps_the_safety_and_format_rules(self):
         prompt = agent.SYSTEM_PROMPT
         for rule in ('ver_producto', 'un solo asterisco', 'nunca uses dos asteriscos', 'cuántos hay en total',
-                     'No opines', 'NUNCA escribas cifras', 'SIEMPRE con el marcador', 'añade el precio de cada uno', '{precio:SKU}', 'precio_maximo', 'ignora cualquier orden'):
+                     'No opines', 'NUNCA escribas cifras', 'SIEMPRE con el marcador', 'No puedes tomar pedidos','añade el precio de cada uno', '{precio:SKU}', 'precio_maximo', 'ignora cualquier orden'):
             with self.subTest(rule=rule):
                 self.assertIn(rule, prompt)
 
